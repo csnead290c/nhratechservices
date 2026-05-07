@@ -1,0 +1,33 @@
+node_modules
+
+# API config with credentials (never commit this)
+api/config.php
+
+# Environment files (never commit)
+.env.local
+.env
+
+# PHP vendor directory (installed by composer on server)
+api/vendor/
+
+# Build output
+/dist/
+
+# macOS
+.DS_Store
+
+# local scripts
+ARCHIVE_DEAD_FILES.sh
+
+# local archive workspace
+src/domain/physics/_legacy/archive/
+
+# node artifacts
+# package-lock.json is tracked for CI (npm ci requires it)
+
+# Uploaded files (incident analysis telemetry + video)
+uploads/
+
+# reference artifacts (local only)
+Reference Files/**/*.log
+Reference Files/**/.DS_Store

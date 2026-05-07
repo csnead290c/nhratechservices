@@ -1,0 +1,355 @@
+/**
+ * Pluggable physics engine with interchangeable models.
+ * 
+ * Models:
+ * - SimpleV1: Current baseline physics (simplified)
+ * - VB6Exact: Exact VB6 TIMESLIP.FRM replication (bit-for-bit parity)
+ */
+
+import type { Vehicle } from '../schemas/vehicle.schema';
+import type { Env } from '../schemas/env.schema';
+import type { RaceLength } from '../config/raceLengths';
+import { predictBaseline } from '../../worker/pipeline';
+
+/**
+ * Available physics model identifiers.
+ */
+export type PhysicsModelId = 'SimpleV1' | 'VB6Exact' | 'RSACLASSIC' | 'Blend';
+
+/**
+ * Legacy model IDs that are mapped to current models for backward compatibility.
+ * Old saved inputs or presets may still contain these strings.
+ */
+const LEGACY_MODEL_MAP: Record<string, PhysicsModelId> = {
+  RSACLASSIC: 'VB6Exact',
+  rsaclassic: 'VB6Exact',
+  RSAClassic: 'VB6Exact',
+  Blend: 'VB6Exact',
+  blend: 'VB6Exact',
+};
+
+const _legacyWarned = new Set<string>();
+
+/** @internal Reset warn-once state (for testing only). */
+export function _resetLegacyWarnings(): void {
+  _legacyWarned.clear();
+}
+
+/**
+ * Resolve a model ID string to a valid PhysicsModelId.
+ * Maps legacy/unknown IDs to VB6Exact with a console warning (once per ID).
+ * 
+ * Use this at trust boundaries where the model ID comes from external input
+ * (worker messages, saved presets, URL params, localStorage).
+ */
+export function resolveModelId(raw: string | undefined | null): PhysicsModelId {
+  if (!raw) {
+    if (!_legacyWarned.has('__empty__')) {
+      console.warn('[resolveModelId] No model ID provided, defaulting to VB6Exact');
+      _legacyWarned.add('__empty__');
+    }
+    return 'VB6Exact';
+  }
+  
+  // Check if it's already a valid model ID
+  if (raw in models) return raw as PhysicsModelId;
+  
+  // Check legacy map
+  const mapped = LEGACY_MODEL_MAP[raw];
+  if (mapped) {
+    if (!_legacyWarned.has(raw)) {
+      console.warn(`[resolveModelId] Legacy model "${raw}" mapped to "${mapped}". Update saved data.`);
+      _legacyWarned.add(raw);
+    }
+    return mapped;
+  }
+  
+  // Unknown model — default to VB6Exact
+  if (!_legacyWarned.has(raw)) {
+    console.warn(`[resolveModelId] Unknown model "${raw}" defaulting to VB6Exact`);
+    _legacyWarned.add(raw);
+  }
+  return 'VB6Exact';
+}
+
+/**
+ * Extended vehicle configuration for advanced physics models.
+ */
+export interface ExtendedVehicle extends Vehicle {
+  // Physical dimensions (additional to base Vehicle)
+  wheelbaseIn?: number;
+  overhangIn?: number;
+  tireWidthIn?: number;
+  tireRolloutIn?: number;
+  
+  // Aerodynamics
+  frontalArea_ft2?: number;
+  cd?: number; // Drag coefficient
+  liftCoeff?: number; // Lift/downforce coefficient
+  
+  // Rolling resistance
+  rrCoeff?: number; // Rolling resistance coefficient
+  
+  // Drivetrain
+  finalDrive?: number; // Final drive ratio (defaults to vehicle.rearGear)
+  transEff?: number; // Transmission efficiency (0..1)
+  
+  // Transmission gearing
+  gearRatios?: number[]; // [g1, g2, ...] Including top gear, length >= 1
+  gearEff?: number[]; // Per-gear efficiency (0..1), optional
+  shiftRPM?: number[]; // Per-gear upshift RPM
+  
+  // Launch device - converter (automatic)
+  converter?: {
+    launchRPM?: number;
+    stallRPM?: number;
+    slipRatio?: number; // e.g. 1.06
+    torqueMult?: number; // e.g. 1.70
+    lockup?: boolean;
+    diameterIn?: number;
+  };
+  
+  // Launch device - clutch (manual)
+  clutch?: {
+    launchRPM?: number;
+    slipRPM?: number;
+    slipRatio?: number;
+    lockup?: boolean;
+  };
+  
+  // Polar moments of inertia (VB6 printout values)
+  pmi?: {
+    engine_flywheel_clutch?: number; // slug-ft²
+    transmission_driveshaft?: number; // slug-ft²
+    tires_wheels_ringgear?: number; // slug-ft²
+  };
+  
+  // Engine configuration
+  engine?: {
+    hpCurve?: { rpm: number; hp: number }[]; // HP-based curve (preferred)
+    fuelType?: string;
+    hpTorqueMultiplier?: number; // Applied to HP/torque calculations
+  };
+  
+  // Power (powerHP is required in base Vehicle, torqueCurve is optional extension)
+  torqueCurve?: { rpm: number; hp?: number; tq_lbft?: number }[]; // Allow hp-only rows
+}
+
+/**
+ * Throttle stop configuration for bracket racing.
+ * 
+ * A throttle stop temporarily reduces engine power to slow the car
+ * and hit a specific dial-in time. Common types:
+ * - Solenoid: Opens a bypass valve, reducing vacuum/boost
+ * - Butterfly: Partially closes throttle blade
+ * - Plate: Blocks airflow with a plate
+ * 
+ * The stop activates at `activateTime_s` after launch and stays
+ * active for `duration_s` seconds, reducing power by `throttlePct`.
+ */
+export interface ThrottleStopConfig {
+  enabled: boolean;
+  
+  // Timing (in seconds after launch/rollout)
+  activateTime_s: number;    // When stop activates (e.g., 0.5 = half second after launch)
+  duration_s: number;        // How long stop is active (e.g., 1.5 seconds)
+  
+  // Power reduction
+  throttlePct: number;       // Throttle percentage when stop is active (0-100)
+                             // 0 = idle, 50 = half throttle, 100 = full throttle (no effect)
+  
+  // Optional: RPM-based activation (alternative to time-based)
+  activateRPM?: number;      // Activate when RPM drops below this (after initial launch)
+  deactivateRPM?: number;    // Deactivate when RPM rises above this
+  
+  // Stop characteristics (for advanced modeling)
+  rampTime_s?: number;       // Time to ramp from full to reduced throttle (default: instant)
+}
+
+/**
+ * Simulation inputs for physics models.
+ */
+export interface SimInputs {
+  vehicle: ExtendedVehicle;
+  env: Env;
+  raceLength: RaceLength;
+  
+  // Optional throttle stop for bracket racing
+  throttleStop?: ThrottleStopConfig;
+  
+  // Apply VB6-style rounding to ET and MPH
+  // VB6 uses "round half up": Int((Value + increment/2) / increment) * increment
+  applyVB6Rounding?: boolean;
+  
+  // Decimal places for ET rounding (VB6 default: 2)
+  etDecimals?: number;
+  
+  // Decimal places for MPH rounding (VB6 default: 1)
+  mphDecimals?: number;
+  
+  // Force Float32 (32-bit) precision to match VB6 Single type
+  vb6Strict?: boolean;
+}
+
+/**
+ * Simulation result from physics models.
+ */
+export interface SimResult {
+  // Final results
+  et_s: number;
+  mph: number;
+  
+  // Timeslip (standard splits)
+  timeslip: { d_ft: number; t_s: number; v_mph: number }[];
+  
+  // Optional detailed traces (for advanced models)
+  traces?: {
+    t_s: number;
+    v_mph: number;
+    a_g: number;
+    s_ft: number;
+    rpm: number;
+    gear: number;
+  }[];
+  
+  // Metadata
+  meta: {
+    model: PhysicsModelId;
+    steps: number;
+    warnings: string[];
+    windowMPH?: {
+      e660_mph?: number;  // Eighth mile trap (594-660 ft)
+      q1320_mph?: number; // Quarter mile trap (1254-1320 ft)
+    };
+    converter?: {
+      used: boolean;
+      avgTR: number;
+      avgETA: number;
+      avgSR: number;
+      deRateMax: number;
+      parasiticConst: number;
+      parasiticQuad: number;
+    };
+    clutch?: {
+      used: boolean;
+      minC: number;
+      lockupAt_ft?: number;
+    };
+    rollout?: {
+      rolloutIn: number;
+      t_roll_s: number;
+    };
+    fuel?: {
+      type: string;
+      minScale: number;
+      maxScale: number;
+    };
+    vb6?: {
+      dt_s: number;
+      trapMode: 'time' | 'distance';
+      windowsFt: {
+        eighth: { start: number; end: number; distance: number };
+        quarter: { start: number; end: number; distance: number };
+      };
+      timeslipPoints: number[];
+      rolloutBehavior: string;
+    };
+    termination?: {
+      reason: 'DISTANCE' | 'TIME_CAP' | 'STEP_CAP' | 'SAFETY';
+      steps: number;
+      t_s: number;
+      target_ft: number;
+    };
+  };
+}
+
+/**
+ * Physics model interface.
+ */
+export interface PhysicsModel {
+  id: PhysicsModelId;
+  simulate(input: SimInputs): SimResult;
+}
+
+/**
+ * SimpleV1 model - wraps existing pipeline.predictBaseline.
+ */
+class SimpleV1Model implements PhysicsModel {
+  id: PhysicsModelId = 'SimpleV1';
+
+  simulate(input: SimInputs): SimResult {
+    // Convert to pipeline format
+    const pipelineResult = predictBaseline({
+      vehicle: input.vehicle,
+      env: input.env,
+      raceLength: input.raceLength,
+    });
+
+    // Convert to SimResult format
+    return {
+      et_s: pipelineResult.baseET_s,
+      mph: pipelineResult.baseMPH,
+      timeslip: pipelineResult.timeslip,
+      meta: {
+        model: 'SimpleV1',
+        steps: pipelineResult.timeslip.length,
+        warnings: [],
+      },
+    };
+  }
+}
+
+// Import VB6Exact implementation
+import { simulateVB6Exact } from './models/vb6Exact';
+
+/**
+ * VB6 Exact model wrapper
+ */
+class VB6ExactModel implements PhysicsModel {
+  id: PhysicsModelId = 'VB6Exact';
+  
+  simulate(input: SimInputs): SimResult {
+    const result = simulateVB6Exact(input);
+    // Ensure model ID is correct
+    return {
+      ...result,
+      meta: {
+        ...result.meta,
+        model: 'VB6Exact',
+      },
+    };
+  }
+}
+
+/**
+ * Model registry.
+ */
+const _vb6Exact = new VB6ExactModel();
+const models: Record<PhysicsModelId, PhysicsModel> = {
+  SimpleV1: new SimpleV1Model(),
+  VB6Exact: _vb6Exact,
+  RSACLASSIC: _vb6Exact,
+  Blend: _vb6Exact,
+};
+
+/**
+ * Get a physics model by ID.
+ * 
+ * @param id - Model identifier (strict — use resolveModelId() for untrusted input)
+ * @returns Physics model instance
+ */
+export function getModel(id: PhysicsModelId): PhysicsModel {
+  const model = models[id];
+  if (!model) {
+    throw new Error(`Unknown physics model: ${id}`);
+  }
+  return model;
+}
+
+/**
+ * Get a physics model by raw string ID (safe for untrusted input).
+ * Maps legacy/unknown IDs to VB6Exact with a warning.
+ */
+export function getModelSafe(rawId: string | undefined | null): PhysicsModel {
+  return getModel(resolveModelId(rawId));
+}

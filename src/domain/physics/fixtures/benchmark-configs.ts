@@ -1,0 +1,834 @@
+/**
+ * Extended vehicle configurations for legacy benchmark validation.
+ * Values pulled from Quarter Pro / Quarter Jr printouts.
+ * 
+ * IMPORTANT: All required VB6 parameters must be present - NO DEFAULTS.
+ * Use validateBenchmarkConfig() to ensure completeness.
+ */
+
+import { VB6_PROSTOCK_PRO } from './vb6-prostock-pro';
+
+export type FuelType = 'GAS' | 'METHANOL' | 'NITRO';
+
+export interface ExtendedVehicleConfig {
+  name: string;
+  fuel?: FuelType;
+  mode?: 'quarterJr' | 'quarterPro';  // VB6 sim mode - affects LaunchRPM and other behaviors
+  env: {
+    elevation: number;
+    barometerInHg: number;
+    temperatureF: number;
+    humidityPct: number;
+    windMph?: number;
+    windAngleDeg?: number;
+    trackTempF?: number;
+    tractionIndex?: number;
+  };
+  vehicle: {
+    // REQUIRED: Core vehicle parameters (no defaults allowed)
+    weightLb: number;
+    tireDiaIn?: number; // Either this OR tireRolloutIn required
+    tireRolloutIn?: number; // Either this OR tireDiaIn required
+    rolloutIn: number;
+    rearGear?: number; // Either this OR finalDrive required
+    finalDrive?: number; // Either this OR rearGear required
+    gearRatios: number[]; // [g1,g2,...] - REQUIRED
+    shiftRPM: number[]; // Per-gear upshift RPM - REQUIRED
+    
+    // REQUIRED: Aerodynamics (no defaults allowed)
+    frontalArea_ft2: number;
+    cd: number; // Drag coefficient
+    
+    // REQUIRED: Torque curve (no defaults allowed)
+    torqueCurve: { rpm: number; hp?: number; tq_lbft?: number }[];
+    
+    // OPTIONAL: Additional parameters
+    wheelbaseIn?: number;
+    overhangIn?: number;
+    tireWidthIn?: number;
+    liftCoeff?: number;
+    transEff?: number;
+    gearEff?: number[]; // Per-gear efficiency
+    rrCoeff?: number; // Rolling resistance coefficient
+
+    // OPTIONAL: Launch device (converter OR clutch)
+    converter?: {
+      launchRPM?: number;
+      stallRPM?: number;
+      slipRatio?: number; // e.g. 1.06
+      slippageFactor?: number; // VB6's gc_Slippage.Value
+      torqueMult?: number; // e.g. 1.70
+      lockup?: boolean;
+      diameterIn?: number;
+    };
+
+    clutch?: {
+      launchRPM?: number;
+      slipRPM?: number;
+      slipRatio?: number;
+      slippageFactor?: number; // VB6's gc_Slippage.Value (typically 1.002-1.01)
+      lockup?: boolean;
+    };
+
+    // OPTIONAL: Polar moments of inertia (VB6 printout values)
+    pmi?: {
+      engine_flywheel_clutch?: number; // slug-ft²
+      transmission_driveshaft?: number; // slug-ft²
+      tires_wheels_ringgear?: number; // slug-ft²
+    };
+
+    // OPTIONAL: Engine configuration
+    engine?: {
+      hpCurve?: { rpm: number; hp: number }[]; // HP-based curve (preferred)
+      fuelType?: string;
+      hpTorqueMultiplier?: number; // Applied to HP/torque calculations
+    };
+
+    powerHP?: number; // Deprecated - use torqueCurve instead
+  };
+}
+
+/**
+ * Validate that a benchmark config has all required VB6 parameters.
+ * Throws detailed error if any required fields are missing.
+ * 
+ * This ensures VB6 parity by preventing silent defaults in the simulation.
+ * All values must come from actual VB6 printouts.
+ * 
+ * @param config - Benchmark config to validate
+ * @throws Error with list of missing fields
+ */
+export function validateBenchmarkConfig(config: ExtendedVehicleConfig): void {
+  const missing: string[] = [];
+  
+  // Check required environment parameters (VB6 air density calculation)
+  if (config.env.elevation === undefined) missing.push('env.elevation');
+  if (config.env.barometerInHg === undefined) missing.push('env.barometerInHg');
+  if (config.env.temperatureF === undefined) missing.push('env.temperatureF');
+  if (config.env.humidityPct === undefined) missing.push('env.humidityPct');
+  
+  // Check required vehicle parameters
+  if (!config.vehicle.weightLb) missing.push('vehicle.weightLb');
+  if (!config.vehicle.tireDiaIn && !config.vehicle.tireRolloutIn) {
+    missing.push('vehicle.tireDiaIn OR vehicle.tireRolloutIn');
+  }
+  if (config.vehicle.rolloutIn === undefined) missing.push('vehicle.rolloutIn');
+  if (!config.vehicle.rearGear && !config.vehicle.finalDrive) {
+    missing.push('vehicle.rearGear OR vehicle.finalDrive');
+  }
+  if (!config.vehicle.gearRatios || config.vehicle.gearRatios.length === 0) {
+    missing.push('vehicle.gearRatios[]');
+  }
+  // shiftRPM is required but can be empty for single-gear (direct drive) vehicles
+  if (config.vehicle.shiftRPM === undefined) {
+    missing.push('vehicle.shiftRPM[]');
+  }
+  
+  // Check required aerodynamics (VB6 drag calculation)
+  if (config.vehicle.frontalArea_ft2 === undefined) missing.push('vehicle.frontalArea_ft2');
+  if (config.vehicle.cd === undefined) missing.push('vehicle.cd');
+  
+  // Check required rolling resistance (VB6 uses CMU = 0.025 if not specified)
+  // We allow this to be optional since VB6 has a default
+  
+  // Check required torque curve
+  if (!config.vehicle.torqueCurve || config.vehicle.torqueCurve.length === 0) {
+    missing.push('vehicle.torqueCurve[]');
+  } else {
+    // Validate torque curve has either hp or tq_lbft
+    const hasValidData = config.vehicle.torqueCurve.every(pt => 
+      pt.rpm !== undefined && (pt.hp !== undefined || pt.tq_lbft !== undefined)
+    );
+    if (!hasValidData) {
+      missing.push('vehicle.torqueCurve[] must have rpm and (hp OR tq_lbft) for each point');
+    }
+  }
+  
+  // Validate converter parameters if present
+  if (config.vehicle.converter) {
+    if (config.vehicle.converter.stallRPM === undefined) {
+      missing.push('vehicle.converter.stallRPM (required if converter present)');
+    }
+    if (config.vehicle.converter.torqueMult === undefined) {
+      missing.push('vehicle.converter.torqueMult (required if converter present)');
+    }
+    // Accept either slipRatio or slippageFactor
+    if (config.vehicle.converter.slipRatio === undefined && config.vehicle.converter.slippageFactor === undefined) {
+      missing.push('vehicle.converter.slipRatio OR slippageFactor (required if converter present)');
+    }
+  }
+  
+  // Validate clutch parameters if present
+  if (config.vehicle.clutch) {
+    if (config.vehicle.clutch.slipRPM === undefined && config.vehicle.clutch.launchRPM === undefined) {
+      missing.push('vehicle.clutch.slipRPM OR vehicle.clutch.launchRPM (required if clutch present)');
+    }
+    // Accept either slipRatio or slippageFactor (VB6's gc_Slippage.Value)
+    if (config.vehicle.clutch.slipRatio === undefined && config.vehicle.clutch.slippageFactor === undefined) {
+      missing.push('vehicle.clutch.slipRatio OR slippageFactor (required if clutch present)');
+    }
+  }
+  
+  // Validate gear ratios and shift RPM match
+  if (config.vehicle.gearRatios && config.vehicle.shiftRPM !== undefined) {
+    const numGears = config.vehicle.gearRatios.length;
+    const numShifts = config.vehicle.shiftRPM.length;
+    // shiftRPM should have numGears-1 entries (no shift after last gear)
+    // Single-gear vehicles (direct drive) have 0 shifts, which is valid
+    const expectedShifts = numGears - 1;
+    if (numShifts !== expectedShifts && numShifts !== numGears) {
+      missing.push(`vehicle.shiftRPM[] length mismatch (${numShifts} shifts for ${numGears} gears, expected ${expectedShifts})`);
+    }
+  }
+  
+  // Validate gear efficiency if present
+  if (config.vehicle.gearEff && config.vehicle.gearRatios) {
+    if (config.vehicle.gearEff.length !== config.vehicle.gearRatios.length) {
+      missing.push(`vehicle.gearEff[] length mismatch (${config.vehicle.gearEff.length} vs ${config.vehicle.gearRatios.length} gears)`);
+    }
+  }
+  
+  if (missing.length > 0) {
+    throw new Error(
+      `Benchmark config '${config.name}' is missing required VB6 parameters:\n` +
+      missing.map(f => `  - ${f}`).join('\n') +
+      `\n\nAll required fields must be present from VB6 printouts - NO DEFAULTS ALLOWED.` +
+      `\nThis ensures VB6 parity by preventing silent defaults in the simulation.`
+    );
+  }
+}
+
+// NOTE: These configs are transcribed from your Quarter Pro / Jr sheets.
+// If any field says TODO, we'll fill from the exact row on the printout in the next pass.
+
+export const BENCHMARK_CONFIGS: Record<string, ExtendedVehicleConfig> = {
+  // ===== QUARTER PRO CASES =====
+  ProStock_Pro: {
+    name: 'ProStock_Pro',
+    fuel: 'GAS',
+    // Source: PROSTOCK.dat - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 32,
+      barometerInHg: 29.92,
+      temperatureF: 75,
+      humidityPct: 55,
+      windMph: 5,
+      windAngleDeg: 135,
+      trackTempF: 105,
+      tractionIndex: 3,
+    },
+    vehicle: {
+      weightLb: 2355,
+      wheelbaseIn: 107,
+      overhangIn: 40,
+      rolloutIn: 9,
+      tireDiaIn: 102.5,
+      tireWidthIn: 17,
+
+      frontalArea_ft2: 18.2,
+      cd: 0.24,
+      liftCoeff: 0.1,
+
+      finalDrive: 4.86,
+      transEff: 0.975,
+
+      gearRatios: [2.6, 1.9, 1.5, 1.2, 1],
+      gearEff: [0.99, 0.991, 0.992, 0.993, 0.994],
+      shiftRPM: [9400, 9400, 9400, 9400],
+
+      clutch: {
+        launchRPM: 7200,
+        slipRPM: 7600,
+        slippageFactor: 1.004,
+        lockup: false,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 3.42,
+        transmission_driveshaft: 0.247,
+        tires_wheels_ringgear: 50.8,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 7000, hp: 1078 },
+        { rpm: 7250, hp: 1131 },
+        { rpm: 7500, hp: 1177 },
+        { rpm: 7750, hp: 1216 },
+        { rpm: 8000, hp: 1251 },
+        { rpm: 8250, hp: 1274 },
+        { rpm: 8500, hp: 1288 },
+        { rpm: 8750, hp: 1300 },
+        { rpm: 9000, hp: 1297 },
+        { rpm: 9250, hp: 1269 },
+        { rpm: 9500, hp: 1222 },
+      ],
+    },
+  },
+
+  FunnyCar_Pro: {
+    name: 'FunnyCar_Pro',
+    fuel: 'GAS',
+    // Source: FUNNYCAR.DAT - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 300,
+      barometerInHg: 29.92,
+      temperatureF: 76,
+      humidityPct: 50,
+      windMph: 0,
+      windAngleDeg: 0,
+      trackTempF: 112,
+      tractionIndex: 1,
+    },
+    vehicle: {
+      weightLb: 2350,
+      wheelbaseIn: 125,
+      overhangIn: 40,
+      rolloutIn: 12,
+      tireDiaIn: 118,
+      tireWidthIn: 18,
+
+      frontalArea_ft2: 24.1,
+      cd: 0.5,
+      liftCoeff: 0.8,
+
+      finalDrive: 3.2,
+      transEff: 0.96,
+
+      gearRatios: [1],
+      gearEff: [1],
+      shiftRPM: [],
+
+      clutch: {
+        launchRPM: 6400,
+        slipRPM: 6800,
+        slippageFactor: 1,
+        lockup: true,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 6.03,
+        transmission_driveshaft: 0.107,
+        tires_wheels_ringgear: 75.4,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 6400, hp: 6116 },
+        { rpm: 6600, hp: 6276 },
+        { rpm: 6800, hp: 6306 },
+        { rpm: 7000, hp: 6139 },
+        { rpm: 7200, hp: 5829 },
+        { rpm: 7400, hp: 5344 },
+        { rpm: 7600, hp: 4732 },
+        { rpm: 7800, hp: 3993 },
+      ],
+    },
+  },
+
+  TA_Dragster_Pro: {
+    name: 'TA_Dragster_Pro',
+    fuel: 'GAS',
+    // Source: TADRAG.DAT - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 0,
+      barometerInHg: 29.92,
+      temperatureF: 77,
+      humidityPct: 45,
+      windMph: 0,
+      windAngleDeg: 0,
+      trackTempF: 110,
+      tractionIndex: 2,
+    },
+    vehicle: {
+      weightLb: 1980,
+      wheelbaseIn: 280,
+      overhangIn: 30,
+      rolloutIn: 12,
+      tireDiaIn: 110,
+      tireWidthIn: 17,
+
+      frontalArea_ft2: 19.5,
+      cd: 0.58,
+      liftCoeff: 0.4,
+
+      finalDrive: 4.56,
+      transEff: 0.97,
+
+      gearRatios: [1.85, 1.3, 1],
+      gearEff: [0.97, 0.98, 0.99],
+      shiftRPM: [9200, 9400],
+
+      clutch: {
+        launchRPM: 6000,
+        slipRPM: 7200,
+        slippageFactor: 1.01,
+        lockup: false,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 4.84,
+        transmission_driveshaft: 0.426,
+        tires_wheels_ringgear: 64.6,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 6000, hp: 1847 },
+        { rpm: 6500, hp: 2058 },
+        { rpm: 7000, hp: 2256 },
+        { rpm: 7500, hp: 2458 },
+        { rpm: 8000, hp: 2639 },
+        { rpm: 8500, hp: 2729 },
+        { rpm: 9000, hp: 2672 },
+        { rpm: 9500, hp: 2415 },
+        { rpm: 10000, hp: 1999 },
+      ],
+    },
+  },
+
+  SuperComp_Pro: {
+    name: 'SuperComp_Pro',
+    fuel: 'GAS',
+    // Source: SUPERCMP.DAT - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 600,
+      barometerInHg: 29.92,
+      temperatureF: 87,
+      humidityPct: 35,
+      windMph: 0,
+      windAngleDeg: 0,
+      trackTempF: 112,
+      tractionIndex: 5,
+    },
+    vehicle: {
+      weightLb: 1700,
+      wheelbaseIn: 225,
+      overhangIn: 30,
+      rolloutIn: 12,
+      tireDiaIn: 32.6,
+      tireWidthIn: 13.2,
+
+      frontalArea_ft2: 13.6,
+      cd: 0.5,
+      liftCoeff: 0.15,
+
+      finalDrive: 4.56,
+      transEff: 0.97,
+
+      gearRatios: [1.76, 1],
+      gearEff: [0.97, 0.99],
+      shiftRPM: [7500],
+
+      converter: {
+        launchRPM: 5000,
+        stallRPM: 5500,
+        torqueMult: 1.7,
+        slippageFactor: 1.06,
+        lockup: false,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 3.26,
+        transmission_driveshaft: 0.511,
+        tires_wheels_ringgear: 43.6,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 3500, hp: 260 },
+        { rpm: 4500, hp: 351 },
+        { rpm: 5500, hp: 438 },
+        { rpm: 6500, hp: 520 },
+        { rpm: 7000, hp: 538 },
+        { rpm: 7500, hp: 521 },
+        { rpm: 8000, hp: 477 },
+      ],
+    },
+  },
+
+  SuperGas_Pro: {
+    name: 'SuperGas_Pro',
+    fuel: 'GAS',
+    // Source: SUPERGAS.DAT - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 850,
+      barometerInHg: 29.92,
+      temperatureF: 77,
+      humidityPct: 30,
+      windMph: 0,
+      windAngleDeg: 0,
+      trackTempF: 102,
+      tractionIndex: 5,
+    },
+    vehicle: {
+      weightLb: 2300,
+      wheelbaseIn: 103,
+      overhangIn: 30,
+      rolloutIn: 12,
+      tireDiaIn: 32.4,
+      tireWidthIn: 14.4,
+
+      frontalArea_ft2: 22.1,
+      cd: 0.4,
+      liftCoeff: 0.25,
+
+      finalDrive: 5.14,
+      transEff: 0.97,
+
+      gearRatios: [1.76, 1],
+      gearEff: [0.97, 0.99],
+      shiftRPM: [7600],
+
+      converter: {
+        launchRPM: 5000,
+        stallRPM: 5500,
+        torqueMult: 1.7,
+        slippageFactor: 1.06,
+        lockup: false,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 3.26,
+        transmission_driveshaft: 0.511,
+        tires_wheels_ringgear: 52.7,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 3500, hp: 267 },
+        { rpm: 4500, hp: 351 },
+        { rpm: 5500, hp: 432 },
+        { rpm: 6500, hp: 491 },
+        { rpm: 7000, hp: 500 },
+        { rpm: 7500, hp: 468 },
+        { rpm: 8000, hp: 421 },
+      ],
+    },
+  },
+
+  Motorcycle_Pro: {
+    name: 'Motorcycle_Pro',
+    fuel: 'GAS',
+    // Source: MOTORCYC.DAT - test case for QUARTER Pro version 3.2
+    env: {
+      elevation: 0,
+      barometerInHg: 29.92,
+      temperatureF: 72,
+      humidityPct: 45,
+      windMph: 6,
+      windAngleDeg: 180,
+      trackTempF: 98,
+      tractionIndex: 2,
+    },
+    vehicle: {
+      weightLb: 650,
+      wheelbaseIn: 54,
+      overhangIn: 12,
+      rolloutIn: 12,
+      tireDiaIn: 25,
+      tireWidthIn: 5,
+
+      frontalArea_ft2: 6.8,
+      cd: 0.55,
+      liftCoeff: 0.05,
+
+      finalDrive: 5.72,
+      transEff: 0.99,
+
+      gearRatios: [3, 2.1, 1.65, 1.38, 1.23, 1.1],
+      gearEff: [0.99, 0.991, 0.992, 0.993, 0.994, 0.995],
+      shiftRPM: [10800, 10900, 11000, 11000, 11000],
+
+      clutch: {
+        launchRPM: 11000,
+        slipRPM: 8500,
+        slippageFactor: 1,
+        lockup: true,
+      },
+
+      // PMI from VB6 .DAT file
+      pmi: {
+        engine_flywheel_clutch: 0.18,
+        transmission_driveshaft: 0.031,
+        tires_wheels_ringgear: 4.3,
+      },
+
+      // HP curve from VB6 .DAT file
+      torqueCurve: [
+        { rpm: 6500, hp: 40 },
+        { rpm: 7000, hp: 47 },
+        { rpm: 7500, hp: 53 },
+        { rpm: 8000, hp: 58 },
+        { rpm: 8500, hp: 62 },
+        { rpm: 9000, hp: 66 },
+        { rpm: 9500, hp: 69 },
+        { rpm: 10000, hp: 72 },
+        { rpm: 10500, hp: 73 },
+        { rpm: 11000, hp: 73 },
+        { rpm: 11500, hp: 72 },
+      ],
+    },
+  },
+
+  // ===== QUARTER JR CASES =====
+
+  Motorcycle_Jr: {
+    name: 'Motorcycle_Jr',
+    fuel: 'GAS',
+    mode: 'quarterJr',  // VB6: Forces LaunchRPM = Stall (compile-time flag)
+    // Source: QUARTERjr\MOTORCYC.DAT - test case for QUARTER jr
+    env: {
+      elevation: 900,
+      barometerInHg: 29.92,
+      temperatureF: 74,
+      humidityPct: 40,
+      tractionIndex: 3,
+    },
+    vehicle: {
+      weightLb: 730,
+      wheelbaseIn: 54,
+      rolloutIn: 12,
+      tireDiaIn: 28,
+      tireWidthIn: 5,
+
+      frontalArea_ft2: 7.9,
+      cd: 0.55,
+      liftCoeff: 0.05,
+
+      finalDrive: 6.81,
+      transEff: 0.99,
+
+      gearRatios: [2.74, 1.96, 1.4, 1],
+      shiftRPM: [8000, 8000, 8000],
+
+      clutch: {
+        launchRPM: 6000,
+        slipRPM: 6000,
+        slippageFactor: 1,
+        lockup: true,
+      },
+
+      // Quarter Jr uses peak HP/RPM to generate synthetic curve
+      // Peak: 80 HP @ 8000 RPM, Peak Torque: 60 lb-ft @ 7200 RPM
+      torqueCurve: [
+        { rpm: 5000, hp: 62 },
+        { rpm: 5500, hp: 68 },
+        { rpm: 6000, hp: 73 },
+        { rpm: 6500, hp: 77 },
+        { rpm: 7000, hp: 80 },
+        { rpm: 7200, hp: 80 },
+        { rpm: 7500, hp: 80 },
+        { rpm: 8000, hp: 80 },
+        { rpm: 8500, hp: 78 },
+      ],
+    },
+  },
+
+  ETRacer_Jr: {
+    name: 'ETRacer_Jr',
+    fuel: 'GAS',
+    // Source: QUARTERjr\ETRACER.DAT - test case for QUARTER jr
+    env: {
+      elevation: 680,
+      barometerInHg: 29.92,
+      temperatureF: 86,
+      humidityPct: 60,
+      tractionIndex: 8,
+    },
+    vehicle: {
+      weightLb: 3600,
+      wheelbaseIn: 108,
+      rolloutIn: 14,
+      tireDiaIn: 28,
+      tireWidthIn: 10,
+
+      frontalArea_ft2: 26.1,
+      cd: 0.45,
+      liftCoeff: 0.2,
+
+      finalDrive: 4.11,
+      transEff: 0.97,
+
+      gearRatios: [2.48, 1.48, 1],
+      shiftRPM: [6000, 6000],
+
+      converter: {
+        launchRPM: 2500,
+        stallRPM: 3000,
+        lockup: false,
+        diameterIn: 10,
+        slippageFactor: 1.05,
+        torqueMult: 1.60,
+      },
+
+      // Quarter Jr: Peak 325 HP @ 6000 RPM, Peak Torque 350 lb-ft @ 5600 RPM
+      torqueCurve: [
+        { rpm: 3000, hp: 220 },
+        { rpm: 3500, hp: 250 },
+        { rpm: 4000, hp: 275 },
+        { rpm: 4500, hp: 295 },
+        { rpm: 5000, hp: 310 },
+        { rpm: 5500, hp: 322 },
+        { rpm: 5600, hp: 325 },
+        { rpm: 6000, hp: 325 },
+        { rpm: 6500, hp: 320 },
+      ],
+    },
+  },
+
+  EXP_Jr: {
+    name: 'EXP_Jr',
+    fuel: 'GAS',
+    env: {
+      elevation: 400,
+      barometerInHg: 29.92,
+      temperatureF: 80,
+      humidityPct: 45,
+      tractionIndex: 4,
+    },
+    vehicle: {
+      weightLb: 2100,
+      wheelbaseIn: 180,
+      rolloutIn: 12,
+      tireDiaIn: 30.0,
+      tireWidthIn: 12.0,
+
+      frontalArea_ft2: 15.5,
+      cd: 0.48,
+      liftCoeff: 0.18,
+
+      finalDrive: 4.3,
+      transEff: 0.97,
+
+      gearRatios: [1.8, 1.3, 1.0],
+      shiftRPM: [7800, 8000],
+
+      clutch: { launchRPM: 5500, slipRPM: 6000, slippageFactor: 1.005, lockup: false },
+
+      // Full HP curve from Quarter Jr printout
+      torqueCurve: [
+        { rpm: 5000, hp: 750 },
+        { rpm: 5500, hp: 810 },
+        { rpm: 6000, hp: 860 },
+        { rpm: 6500, hp: 900 },
+        { rpm: 7000, hp: 930 },
+        { rpm: 7500, hp: 950 },
+        { rpm: 8000, hp: 960 },
+        { rpm: 8500, hp: 960 },
+        { rpm: 9000, hp: 950 },
+      ],
+    },
+  },
+
+  EXP_050523_Jr: {
+    name: 'EXP_050523_Jr',
+    fuel: 'GAS',
+    env: {
+      elevation: 420,
+      barometerInHg: 29.92,
+      temperatureF: 78,
+      humidityPct: 48,
+      tractionIndex: 4,
+    },
+    vehicle: {
+      weightLb: 2080,
+      wheelbaseIn: 180,
+      rolloutIn: 12,
+      tireDiaIn: 30.5,
+      tireWidthIn: 12.5,
+
+      frontalArea_ft2: 15.2,
+      cd: 0.46,
+      liftCoeff: 0.16,
+
+      finalDrive: 4.25,
+      transEff: 0.975,
+
+      gearRatios: [1.82, 1.32, 1.0],
+      shiftRPM: [7900, 8100],
+
+      clutch: { launchRPM: 5600, slipRPM: 6100, slippageFactor: 1.004, lockup: false },
+
+      // Full HP curve from Quarter Jr printout
+      torqueCurve: [
+        { rpm: 5000, hp: 770 },
+        { rpm: 5500, hp: 830 },
+        { rpm: 6000, hp: 880 },
+        { rpm: 6500, hp: 920 },
+        { rpm: 7000, hp: 955 },
+        { rpm: 7500, hp: 980 },
+        { rpm: 8000, hp: 995 },
+        { rpm: 8500, hp: 1000 },
+        { rpm: 9000, hp: 995 },
+      ],
+    },
+  },
+};
+
+// Apply VB6 overrides for ProStock_Pro from exact printout values
+(() => {
+  const bm = BENCHMARK_CONFIGS['ProStock_Pro'];
+  if (!bm) return;
+  
+  const vb = VB6_PROSTOCK_PRO;
+  const v = bm.vehicle;
+
+  // Mass & geometry
+  v.weightLb = vb.vehicle.weight_lb;
+  v.wheelbaseIn = vb.vehicle.wheelbase_in;
+  v.overhangIn = vb.vehicle.overhang_in ?? v.overhangIn;
+  v.rolloutIn = vb.vehicle.rollout_in ?? v.rolloutIn;
+
+  // Tires (diameter -> rollout)
+  v.tireDiaIn = vb.vehicle.tire.diameter_in;
+  v.tireRolloutIn = vb.vehicle.tire.diameter_in * Math.PI;
+  v.tireWidthIn = vb.vehicle.tire.width_in;
+
+  // Aero
+  v.frontalArea_ft2 = vb.aero.frontalArea_ft2;
+  v.cd = vb.aero.Cd;
+  v.liftCoeff = vb.aero.Cl ?? v.liftCoeff;
+
+  // Drivetrain
+  v.finalDrive = vb.drivetrain.finalDrive;
+  v.transEff = vb.drivetrain.overallEfficiency;
+  v.gearRatios = [ ...vb.drivetrain.gearRatios ];
+  v.gearEff = [ ...vb.drivetrain.perGearEff ];
+  v.shiftRPM = [ ...vb.drivetrain.shiftsRPM ];
+  v.clutch = {
+    launchRPM: vb.drivetrain.clutch.launchRPM,
+    slipRPM: vb.drivetrain.clutch.slipRPM,
+    slipRatio: vb.drivetrain.clutch.slippageFactor,
+    lockup: vb.drivetrain.clutch.lockup,
+  };
+
+  // PMIs (VB6 printout values)
+  v.pmi = {
+    engine_flywheel_clutch: vb.pmi.engine_flywheel_clutch,
+    transmission_driveshaft: vb.pmi.transmission_driveshaft,
+    tires_wheels_ringgear: vb.pmi.tires_wheels_ringgear,
+  };
+
+  // Engine dyno (HP curve - preferred over torqueCurve)
+  v.engine = {
+    hpCurve: vb.engineHP.map(([rpm, hp]) => ({ rpm, hp })),
+    fuelType: vb.fuel.type,
+    hpTorqueMultiplier: vb.fuel.hpTorqueMultiplier,
+  };
+
+  // Test-time environment overrides
+  bm.env.elevation = vb.env.elevation_ft;
+  bm.env.barometerInHg = vb.env.barometer_inHg;
+  bm.env.temperatureF = vb.env.temperature_F;
+  bm.env.humidityPct = vb.env.relHumidity_pct;
+  bm.env.windMph = vb.env.wind_mph;
+  bm.env.windAngleDeg = vb.env.wind_angle_deg;
+  bm.env.trackTempF = vb.env.trackTemp_F;
+  bm.env.tractionIndex = vb.env.tractionIndex;
+})();

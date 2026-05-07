@@ -1,0 +1,259 @@
+/**
+ * VB6-ported driveline (converter/clutch) calculations.
+ * Source: TIMESLIP.FRM lines 1144-1178
+ * 
+ * VB6 uses complex converter/clutch models with:
+ * - Stall RPM clamping
+ * - Speed ratio dependent torque multiplication
+ * - Slippage factors
+ * - Lock-up behavior
+ */
+
+/**
+ * VB6 torque converter model.
+ * 
+ * VB6 Source: TIMESLIP.FRM lines 1154-1172
+ * 
+ * VB6 Algorithm:
+ * 1. Calculate lock RPM: LockRPM = wheelRPM * gearRatio * finalDrive
+ * 2. Calculate slip ratio: SlipRatio = slippage * LockRPM / stallRPM
+ * 3. Adjust stall RPM if slip ratio > 0.6 (dynamic stall)
+ * 4. Clamp engine RPM to stall RPM minimum
+ * 5. Calculate torque multiplication based on slip ratio
+ * 6. Calculate clutch slip (coupling factor)
+ * 
+ * @param engineTorque - Engine torque (lb-ft)
+ * @param engineRPM - Engine RPM (from wheel speed)
+ * @param wheelRPM - Wheel RPM (output shaft)
+ * @param gearRatio - Current gear ratio
+ * @param finalDrive - Final drive ratio
+ * @param stallRPM - Converter stall RPM
+ * @param torqueMult - Static torque multiplication factor (typically 1.5-2.5)
+ * @param slippage - Converter slippage factor (typically 1.0-1.1)
+ * @param gear - Current gear (1-based, for lock-up logic)
+ * @param lockup - Whether converter locks up after 1st gear
+ * @returns Wheel torque and effective engine RPM
+ */
+export function vb6Converter(
+  engineTorque: number,
+  _engineRPM: number,
+  wheelRPM: number,
+  gearRatio: number,
+  finalDrive: number,
+  stallRPM: number,
+  torqueMult: number,
+  slippage: number = 1.05,
+  gear: number = 1,
+  lockup: boolean = false
+): { Twheel: number; engineRPM_out: number } {
+  // VB6: TIMESLIP.FRM:1145-1146
+  // LockRPM = DSRPM * gc_GearRatio.Value * TGR(iGear)
+  // EngRPM(L) = gc_Slippage.Value * LockRPM
+  const LockRPM = wheelRPM * gearRatio * finalDrive;
+  let EngRPM_out = slippage * LockRPM;
+  let ClutchSlip = 1.0;
+  
+  // VB6: TIMESLIP.FRM:1154-1172 (converter)
+  if (gear === 1 || !lockup) {
+    // Non lock-up converter (1st gear or no lock-up)
+    let zStall = stallRPM;
+    let SlipRatio = slippage * LockRPM / zStall;
+    
+    // VB6: TIMESLIP.FRM:1159-1161
+    // Dynamic stall adjustment when slip ratio > 0.6
+    if (SlipRatio > 0.6) {
+      zStall = zStall * (1 + (slippage - 1) * (SlipRatio - 0.6) / ((1 / slippage) - 0.6));
+      SlipRatio = slippage * LockRPM / zStall;
+    }
+    
+    // VB6: TIMESLIP.FRM:1162
+    ClutchSlip = 1 / slippage;
+    
+    // VB6: TIMESLIP.FRM:1164-1168
+    // Clamp engine RPM to stall minimum
+    if (EngRPM_out < zStall) {
+      EngRPM_out = zStall;
+      // Torque multiplication decreases linearly with slip ratio
+      const Work = torqueMult - (torqueMult - 1) * SlipRatio;
+      ClutchSlip = Work * LockRPM / zStall;
+    }
+  } else {
+    // VB6: TIMESLIP.FRM:1170-1171
+    // Lock-up converter (2nd gear and above with lock-up)
+    EngRPM_out = 1.005 * LockRPM; // 0.5% slippage
+    ClutchSlip = LockRPM / EngRPM_out;
+  }
+  
+  // VB6: TIMESLIP.FRM:1174
+  if (ClutchSlip > 1) ClutchSlip = 1;
+  
+  // VB6: TIMESLIP.FRM:1178
+  // HP = HP * ClutchSlip
+  // Torque is proportional to HP at same RPM, so:
+  const Twheel = engineTorque * ClutchSlip * gearRatio * finalDrive;
+  
+  return { Twheel, engineRPM_out: EngRPM_out };
+}
+
+/**
+ * VB6 clutch model (HP-based).
+ * 
+ * VB6 Source: TIMESLIP.FRM lines 1148-1152, 1176-1178
+ * 
+ * VB6 Algorithm:
+ * 1. Calculate lock RPM: LockRPM = wheelRPM * gearRatio * finalDrive
+ * 2. Calculate engine RPM with slippage: EngRPM = slippage * LockRPM
+ * 3. Clamp engine RPM to slip/stall RPM minimum (1st gear or no lock-up)
+ * 4. Calculate clutch slip: ClutchSlip = LockRPM / EngRPM
+ * 5. Get HP from engine curve at EngRPM
+ * 6. Scale HP by ClutchSlip: HP_eff = HP * ClutchSlip
+ * 7. Convert back to torque: T_eff = (HP_eff * 5252) / EngRPM
+ * 8. Apply gear ratios: Twheel = T_eff * gearRatio * finalDrive
+ * 
+ * @param engineHP - Engine HP at current RPM
+ * @param engineRPM - Engine RPM (from wheel speed, unused - recalculated)
+ * @param wheelRPM - Wheel RPM (output shaft)
+ * @param gearRatio - Current gear ratio
+ * @param finalDrive - Final drive ratio
+ * @param slipRPM - Clutch slip/stall RPM
+ * @param slippage - Clutch slippage factor (typically 1.0025)
+ * @param gear - Current gear (1-based, for lock-up logic)
+ * @param lockup - Whether clutch locks up after 1st gear
+ * @returns Wheel torque, effective engine RPM, and coupling factor
+ */
+export function vb6Clutch(
+  engineHP: number,
+  _engineRPM: number,
+  wheelRPM: number,
+  gearRatio: number,
+  finalDrive: number,
+  slipRPM: number,
+  slippage: number = 1.0025,
+  gear: number = 1,
+  lockup: boolean = false
+): { Twheel: number; engineRPM_out: number; coupling: number } {
+  // VB6: TIMESLIP.FRM:1145-1146
+  // LockRPM = DSRPM * gc_GearRatio.Value * TGR(iGear)
+  // EngRPM(L) = gc_Slippage.Value * LockRPM
+  const LockRPM = wheelRPM * gearRatio * finalDrive;
+  let EngRPM_out = slippage * LockRPM;
+  
+  // VB6: TIMESLIP.FRM:1148-1152 (clutch)
+  // If EngRPM(L) < Stall Then
+  //     If iGear = 1 Or gc_LockUp.Value = 0 Then EngRPM(L) = Stall
+  // End If
+  // ClutchSlip = LockRPM / EngRPM(L)
+  if (EngRPM_out < slipRPM) {
+    if (gear === 1 || !lockup) {
+      EngRPM_out = slipRPM;
+    }
+  }
+  
+  const ClutchSlip = LockRPM / EngRPM_out;
+  
+  // VB6: TIMESLIP.FRM:1176-1178
+  // Call TABY(xrpm(), yhp(), NHP, 1, EngRPM(L), HP)
+  // HP = gc_HPTQMult.Value * HP / hpc
+  // HP = HP * ClutchSlip
+  //
+  // VB6 scales HP by ClutchSlip, then converts to torque
+  // We receive HP at EngRPM_out, so scale it:
+  const HP_eff = engineHP * ClutchSlip;
+  
+  // Convert HP back to torque at EngRPM_out
+  // T = (HP * 5252) / RPM
+  const T_eff = EngRPM_out > 0 ? (HP_eff * 5252) / EngRPM_out : 0;
+  
+  // Apply gear ratios
+  const Twheel = T_eff * gearRatio * finalDrive;
+  
+  return { Twheel, engineRPM_out: EngRPM_out, coupling: ClutchSlip };
+}
+
+/**
+ * VB6 converter coupling calculation (for HP-based path).
+ * 
+ * VB6 Source: TIMESLIP.FRM:1156-1168
+ * 
+ * Returns Work factor and ClutchSlip (coupling) for use in HP chain.
+ * 
+ * @param lockRPM - Lock RPM (wheelRPM * gearRatio * finalDrive)
+ * @param stallRPM - Converter stall RPM
+ * @param torqueMult - Static torque multiplication factor
+ * @param slippage - Converter slippage factor
+ * @param stepCount - Current step count (for dynamic stall after step 2)
+ * @returns Work factor, coupling, slip ratio, and effective stall RPM
+ */
+export function vb6ConverterCoupling(
+  lockRPM: number,
+  stallRPM: number,
+  torqueMult: number,
+  slippage: number,
+  stepCount: number = 1
+): { work: number; coupling: number; slipRatio: number; zStall: number; engRPM: number } {
+  // VB6: TIMESLIP.FRM:1155-1156
+  // zStall = Stall
+  // SlipRatio = gc_Slippage.Value * LockRPM / zStall
+  let zStall = stallRPM;
+  let SlipRatio = slippage * lockRPM / zStall;
+  
+  // VB6: TIMESLIP.FRM:1158-1161
+  // If L > 2 Then
+  //     If SlipRatio > 0.6 Then zStall = zStall * (1 + (gc_Slippage.Value - 1) * (SlipRatio - 0.6) / ((1 / gc_Slippage.Value) - 0.6))
+  //     SlipRatio = gc_Slippage.Value * LockRPM / zStall
+  // End If
+  if (stepCount > 2 && SlipRatio > 0.6) {
+    zStall = zStall * (1 + (slippage - 1) * (SlipRatio - 0.6) / ((1 / slippage) - 0.6));
+    SlipRatio = slippage * lockRPM / zStall;
+  }
+  
+  // VB6: TIMESLIP.FRM:1162
+  // ClutchSlip = 1 / gc_Slippage.Value   <-- DEFAULT value
+  let ClutchSlip = 1 / slippage;
+  
+  // VB6: TIMESLIP.FRM:1146
+  // EngRPM(L) = gc_Slippage.Value * LockRPM
+  let engRPM = slippage * lockRPM;
+  
+  // VB6: TIMESLIP.FRM:1164-1168
+  // If EngRPM(L) < zStall Then
+  //     EngRPM(L) = zStall
+  //     Work = gc_TorqueMult.Value - (gc_TorqueMult.Value - 1) * SlipRatio
+  //     ClutchSlip = Work * LockRPM / zStall
+  // End If
+  let Work = 1.0; // Default when not stalling
+  if (engRPM < zStall) {
+    engRPM = zStall;
+    Work = torqueMult - (torqueMult - 1) * SlipRatio;
+    ClutchSlip = Work * lockRPM / zStall;
+  }
+  
+  // VB6: TIMESLIP.FRM:1174
+  // If ClutchSlip > 1 Then ClutchSlip = 1
+  if (ClutchSlip > 1) ClutchSlip = 1;
+  
+  return {
+    work: Work,
+    coupling: ClutchSlip,
+    slipRatio: SlipRatio,
+    zStall: zStall,
+    engRPM: engRPM
+  };
+}
+
+/**
+ * VB6 direct drive (no converter or clutch).
+ * 
+ * @param engineTorque - Engine torque (lb-ft)
+ * @param gearRatio - Current gear ratio
+ * @param finalDrive - Final drive ratio
+ * @returns Wheel torque
+ */
+export function vb6DirectDrive(
+  engineTorque: number,
+  gearRatio: number,
+  finalDrive: number
+): number {
+  // Direct mechanical connection
+  return engineTorque * gearRatio * finalDrive;
+}
