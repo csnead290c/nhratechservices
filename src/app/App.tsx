@@ -161,7 +161,7 @@ function UserMenu() {
               textAlign: 'left',
               border: 'none',
               backgroundColor: 'transparent',
-              color: '#dc2626',
+              color: 'var(--color-accent)',
               cursor: 'pointer',
             }}
           >
@@ -183,8 +183,8 @@ function Navigation() {
   // Listen for products update event to re-render navigation
   useEffect(() => {
     const handleProductsUpdate = () => { forceUpdate(n => n + 1); };
-    window.addEventListener('rsa-products-updated', handleProductsUpdate);
-    return () => window.removeEventListener('rsa-products-updated', handleProductsUpdate);
+    window.addEventListener('nhrats-products-updated', handleProductsUpdate);
+    return () => window.removeEventListener('nhrats-products-updated', handleProductsUpdate);
   }, []);
 
   // Close menu on ESC key
@@ -220,8 +220,8 @@ function Navigation() {
     fontWeight: 700,
     padding: '1px 5px',
     borderRadius: '6px',
-    backgroundColor: tier === 'Pro' ? 'rgba(220, 38, 38, 0.25)' : 'rgba(255, 255, 255, 0.1)',
-    color: tier === 'Pro' ? '#fca5a5' : 'rgba(255, 255, 255, 0.6)',
+    backgroundColor: tier === 'Pro' ? 'rgba(230, 30, 46, 0.25)' : 'rgba(255, 255, 255, 0.1)',
+    color: tier === 'Pro' ? '#ffaaaa' : 'rgba(255, 255, 255, 0.6)',
     letterSpacing: '0.3px',
     textTransform: 'uppercase' as const,
     lineHeight: '1.4',
@@ -316,11 +316,11 @@ function Navigation() {
   return (
     <>
       {/* Desktop nav — primary links only */}
-      <nav className="rsa-desktop-nav" style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
+      <nav className="nhrats-desktop-nav" style={{ display: 'flex', gap: '2px', alignItems: 'center' }}>
         {primaryLinks}
         {/* Hamburger for secondary items — always visible on desktop too */}
         <button
-          className="rsa-more-btn"
+          className="nhrats-more-btn"
           onClick={() => setMenuOpen(o => !o)}
           style={{
             background: 'none',
@@ -342,7 +342,7 @@ function Navigation() {
 
       {/* Mobile hamburger button — replaces entire nav on small screens */}
       <button
-        className="rsa-mobile-btn"
+        className="nhrats-mobile-btn"
         onClick={() => setMenuOpen(o => !o)}
         style={{
           display: 'none',
@@ -362,7 +362,7 @@ function Navigation() {
       {/* Backdrop — click outside to close */}
       {menuOpen && (
         <div
-          data-testid="rsa-menu-backdrop"
+          data-testid="nhrats-menu-backdrop"
           onClick={close}
           style={{
             position: 'fixed',
@@ -376,8 +376,8 @@ function Navigation() {
       {menuOpen && (
         <nav
           ref={menuRef}
-          className="rsa-dropdown-nav"
-          data-testid="rsa-dropdown-nav"
+          className="nhrats-dropdown-nav"
+          data-testid="nhrats-dropdown-nav"
           style={{
             position: 'absolute',
             top: '100%',
@@ -394,7 +394,7 @@ function Navigation() {
           }}
         >
           {/* On mobile, show primary links too */}
-          <div className="rsa-dropdown-primary">
+          <div className="nhrats-dropdown-primary">
             {primaryLinks}
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '4px 0' }} />
           </div>
@@ -405,14 +405,14 @@ function Navigation() {
       {/* Responsive styles */}
       <style>{`
         /* Desktop: show desktop nav, hide mobile button */
-        .rsa-mobile-btn { display: none !important; }
-        .rsa-dropdown-primary { display: none; }
+        .nhrats-mobile-btn { display: none !important; }
+        .nhrats-dropdown-primary { display: none; }
 
         /* ≤900px: hide desktop nav, show mobile button, show primary links in dropdown */
         @media (max-width: 900px) {
-          .rsa-desktop-nav { display: none !important; }
-          .rsa-mobile-btn { display: block !important; }
-          .rsa-dropdown-primary { display: block; }
+          .nhrats-desktop-nav { display: none !important; }
+          .nhrats-mobile-btn { display: block !important; }
+          .nhrats-dropdown-primary { display: block; }
         }
       `}</style>
     </>
@@ -475,11 +475,6 @@ function NhraPageGuard({ children }: { children: React.ReactNode }) {
 }
 
 function AppShell({ children }: { children: React.ReactNode }) {
-  const location = useLocation();
-
-  // NHRA-mode: hide RSA branding on parity/tech pages for all users.
-  const nhraMode = location.pathname.startsWith('/parity') || location.pathname.startsWith('/tech');
-
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <header
@@ -495,15 +490,9 @@ function AppShell({ children }: { children: React.ReactNode }) {
           gap: '1rem',
         }}
       >
-        {nhraMode ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <img src="/nhra-header-logo.png" alt="NHRA" style={{ height: '40px', width: 'auto' }} />
-          </div>
-        ) : (
-          <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', textDecoration: 'none' }}>
-            <img src="/rsa-logo.png" alt="RSA Logo" style={{ height: '40px', width: 'auto' }} />
-          </Link>
-        )}
+        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', textDecoration: 'none' }}>
+          <img src="/nhra-header-logo.png" alt="NHRA Tech Services" style={{ height: '40px', width: 'auto' }} />
+        </Link>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', overflow: 'hidden' }}>
           <Navigation />
         </div>
@@ -525,7 +514,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           borderTop: '1px solid var(--color-border)',
         }}
       >
-        {nhraMode ? 'NHRA Tech Parity Portal © 2026' : 'Racing Systems Analysis © 2026'}
+        NHRA Tech Services © 2026
       </footer>
       <ViewAsBanner />
     </div>

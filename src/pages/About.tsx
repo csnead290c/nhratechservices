@@ -4,70 +4,61 @@ function About() {
   return (
     <Page title="">
       <div style={{ maxWidth: '800px', margin: '0 auto' }}>
-        {/* Company Overview */}
+        {/* Overview */}
         <div className="card mb-6">
           <h2 className="mb-4" style={{ fontSize: '1.5rem', color: 'var(--color-text)' }}>
-            About Racing Systems Analysis!
+            About NHRA Tech Services
           </h2>
-          
+
           <p className="text-muted mb-4" style={{ fontSize: '0.95rem', lineHeight: '1.8' }}>
-            Racing Systems Analysis (RSA) has been developing professional-grade drag racing simulation 
-            software for over 4 decades. Our software is trusted by racers, engine builders, and chassis shops 
-            worldwide to predict performance, optimize setups, and win races.
+            NHRA Tech Services provides professional-grade drag racing simulation, data tools,
+            and technical administrative resources purpose-built for the NHRA community. Our
+            platform is trusted by racers, crew chiefs, engine builders, and technical officials
+            to analyze performance, manage technical inspection, and make data-driven decisions.
           </p>
 
           <p className="text-muted mb-4" style={{ fontSize: '0.95rem', lineHeight: '1.8' }}>
-            Our simulation engine is based on decades of real-world data and physics modeling, 
-            originally developed for Windows desktop applications. Just like with your racing
-            operation, we felt like it was time for an upgrade! This web version brings 
-            the same proven accuracy to modern browsers, accessible from any device.
+            Built on decades of real-world physics modeling and race data, our simulation engine
+            delivers the same proven accuracy that professional teams rely on — now accessible
+            from any device in a modern, browser-based interface.
           </p>
         </div>
 
-        {/* Products */}
+        {/* Tools */}
         <div className="card mb-6">
           <h2 className="mb-4" style={{ fontSize: '1.5rem', color: 'var(--color-text)' }}>
-            Our Products
+            Our Tools
           </h2>
 
           <div className="mb-4">
-            <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: '#dc2626' }}>
-              Quarter Jr / Quarter Pro
+            <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--color-primary)' }}>
+              Parity Portal
             </h3>
             <p className="text-muted mb-4" style={{ fontSize: '0.95rem', lineHeight: '1.6' }}>
-              Drag racing simulation for 1/4 mile and 1/8 mile racing. Includes ET prediction,
-              trap speed calculation, incremental analysis, and detailed run simulation with shift points,
-              tire slip, and environmental corrections. Quarter Jr provides the core simulation;
-              Quarter Pro adds advanced inputs, optimizers, and detailed analysis.
+              The NHRA Tech Parity Portal provides deep analysis of run data across classes, events,
+              and drivers. Query corrected and uncorrected runs, compare engine combos, review weather
+              impact, and investigate parity trends — all in one place.
             </p>
+          </div>
+
+          <div className="mb-4">
+            <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--color-primary)' }}>
+              Tech Master
+            </h3>
             <p className="text-muted mb-4" style={{ fontSize: '0.95rem', lineHeight: '1.6' }}>
-              Additionally, we have incorporated our legacy Bonneville Pro land speed simuplation
-              into this same umbrella by allowing the user to select the track/distance used by
-              land speed racers.
+              A full technical inspection workflow — identity management, event entry rosters,
+              scale records, tech cases, and findings — integrated with live run data for
+              comprehensive event-day technical oversight.
             </p>
           </div>
+
           <div className="mb-4">
-            <div>
-              <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: '#dc2626' }}>
-                Engine Jr / Engine Pro
-              </h3>
-              <p className="text-muted" style={{ fontSize: '0.95rem', lineHeight: '1.6' }}>
-                Engine dyno simulation and power curve analysis. Engine Jr covers core design inputs
-                and performance outputs; Engine Pro adds flowbench data, mechanical details, flow details, 
-                and recommendations.
-              </p>
-            </div>
-          </div>
-          <div className="mb-4">
-            <div>
-              <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: '#dc2626' }}>
-                COMING SOON!
-              </h3>
-              <p className="text-muted" style={{ fontSize: '0.95rem', lineHeight: '1.6' }}>
-                All other tools and applications from RSA that you have come to rely on are coming soon!  
-                Clutch Jr/Pro, Fourlink, Density, and more is on the horizon!
-              </p>
-            </div>
+            <h3 className="mb-2" style={{ fontSize: '1.1rem', fontWeight: '600', color: 'var(--color-accent)' }}>
+              More Coming Soon
+            </h3>
+            <p className="text-muted" style={{ fontSize: '0.95rem', lineHeight: '1.6' }}>
+              Additional NHRA technical services tools are in active development. Stay tuned.
+            </p>
           </div>
         </div>
 
@@ -80,8 +71,8 @@ function About() {
           <div style={{ fontSize: '0.95rem', lineHeight: '1.8' }}>
             <p className="text-muted mb-2">
               <strong>Email:</strong>{' '}
-              <a href="mailto:support@racingsystemsanalysis.com" style={{ color: '#dc2626' }}>
-                support@racingsystemsanalysis.com
+              <a href="mailto:support@nhratechservices.com" style={{ color: 'var(--color-accent)' }}>
+                support@nhratechservices.com
               </a>
             </p>
           </div>

@@ -142,7 +142,7 @@ export interface UserSubscription {
 // =============================================================================
 
 // API base URL - uses environment variable or defaults to production
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://racingsystemsanalysis.com/api';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://nhratechservices.com/api';
 
 /**
  * Get the auth token from localStorage

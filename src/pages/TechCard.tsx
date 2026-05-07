@@ -148,7 +148,7 @@ export default function TechCard() {
       <!DOCTYPE html>
       <html>
         <head>
-          <title>Tech Card - ${data.driverName || 'RSA'}</title>
+          <title>Tech Card - ${data.driverName || 'NHRATS'}</title>
           <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
             body { font-family: Arial, sans-serif; font-size: 11px; padding: 20px; }
@@ -517,7 +517,7 @@ export default function TechCard() {
             <div className="tech-card">
               <div className="header">
                 <h1>TECH INSPECTION CARD</h1>
-                <p>Racing Systems Analysis</p>
+                <p>NHRA Tech Services</p>
               </div>
               
               <div className="section">

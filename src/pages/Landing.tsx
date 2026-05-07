@@ -21,7 +21,7 @@ export default function Landing() {
       <section style={{
         padding: '80px 20px 60px',
         textAlign: 'center',
-        background: 'linear-gradient(180deg, rgba(220, 38, 38, 0.08) 0%, transparent 100%)',
+        background: 'linear-gradient(180deg, rgba(38, 46, 135, 0.08) 0%, transparent 100%)',
       }}>
         <div style={{ maxWidth: '900px', margin: '0 auto' }}>
           <div style={{ 
@@ -31,7 +31,7 @@ export default function Landing() {
             gap: '16px',
             marginBottom: '24px',
           }}>
-            <img src="/rsa-logo.png" alt="RSA" style={{ height: '64px' }} />
+            <img src="/nhra-header-logo.png" alt="NHRA Tech Services" style={{ height: '64px' }} />
           </div>
           
           <h2 style={{ 
@@ -59,13 +59,13 @@ export default function Landing() {
               to={getStartedLink}
               style={{
                 padding: '16px 32px',
-                backgroundColor: '#dc2626',
+                backgroundColor: 'var(--color-accent)',
                 color: 'white',
                 borderRadius: '8px',
                 textDecoration: 'none',
                 fontWeight: 700,
                 fontSize: '1.1rem',
-                boxShadow: '0 4px 14px rgba(220, 38, 38, 0.4)',
+                boxShadow: '0 4px 14px rgba(230, 30, 46, 0.4)',
                 transition: 'transform 0.2s, box-shadow 0.2s',
               }}
             >
@@ -111,7 +111,7 @@ export default function Landing() {
               {
                 icon: '🚀',
                 title: 'Coming Soon!',
-                desc: 'All other tools and applications from RSA that you have come to rely on are coming soon! Clutch Jr/Pro, Fourlink, Density, and more is on the horizon!',
+                desc: 'More tools are on the horizon — Clutch Jr/Pro, Fourlink, Density, and additional NHRA technical services.',
                 tag: 'Core',
               },
             ].map(feature => (
@@ -131,8 +131,8 @@ export default function Landing() {
                     top: '12px',
                     right: '12px',
                     padding: '4px 8px',
-                    backgroundColor: 'rgba(220, 38, 38, 0.2)',
-                    color: '#dc2626',
+                    backgroundColor: 'rgba(230, 30, 46, 0.2)',
+                    color: 'var(--color-accent)',
                     borderRadius: '4px',
                     fontSize: '0.7rem',
                     fontWeight: 600,
@@ -217,7 +217,7 @@ export default function Landing() {
               padding: '32px 24px',
               backgroundColor: 'var(--color-surface)',
               borderRadius: '16px',
-              border: '2px solid #dc2626',
+              border: '2px solid var(--color-accent)',
               position: 'relative',
             }}>
               <div style={{
@@ -226,7 +226,7 @@ export default function Landing() {
                 left: '50%',
                 transform: 'translateX(-50%)',
                 padding: '4px 16px',
-                backgroundColor: '#dc2626',
+                backgroundColor: 'var(--color-accent)',
                 color: 'white',
                 borderRadius: '12px',
                 fontSize: '0.8rem',
@@ -259,7 +259,7 @@ export default function Landing() {
                 style={{
                   display: 'block',
                   padding: '12px 24px',
-                  backgroundColor: '#dc2626',
+                  backgroundColor: 'var(--color-accent)',
                   color: 'white',
                   borderRadius: '8px',
                   textDecoration: 'none',
@@ -272,7 +272,7 @@ export default function Landing() {
           </div>
           
           <p style={{ marginTop: '24px', fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>
-            Save 17% with annual billing • <Link to="/pricing" style={{ color: '#dc2626' }}>See all plans</Link>
+            Save 17% with annual billing • <Link to="/pricing" style={{ color: 'var(--color-accent)' }}>See all plans</Link>
           </p>
         </div>
       </section>

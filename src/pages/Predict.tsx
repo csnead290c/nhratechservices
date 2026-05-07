@@ -1004,13 +1004,13 @@ function Predict() {
           {/* ET Slip Style Results */}
           <div className="et-slip" style={{ opacity: (isDebouncing || loading) ? 0.7 : 1 }}>
             <div className="et-slip-header">
-              <img src="/rsa-icon.png" alt="RSA" style={{ height: '48px', marginBottom: '4px', mixBlendMode: 'multiply' }} />
+              <img src="/nhra-header-logo.png" alt="NHRA" style={{ height: '48px', marginBottom: '4px', mixBlendMode: 'multiply' }} />
 
               <div style={{ fontSize: '8px', color: '#666', marginTop: '4px' }}>
                 {new Date().toLocaleDateString()} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
               </div>
               <div style={{ fontSize: '7px', color: '#888', marginTop: '2px' }}>
-                racingsystemsanalysis.com
+                nhratechservices.com
               </div>
             </div>
             

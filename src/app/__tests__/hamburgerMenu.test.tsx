@@ -16,14 +16,14 @@ describe('Hamburger menu UX', () => {
     fireEvent.click(moreBtn);
 
     // Dropdown should be visible
-    expect(screen.getByTestId('rsa-dropdown-nav')).toBeInTheDocument();
+    expect(screen.getByTestId('nhrats-dropdown-nav')).toBeInTheDocument();
 
     // Click the backdrop
-    const backdrop = screen.getByTestId('rsa-menu-backdrop');
+    const backdrop = screen.getByTestId('nhrats-menu-backdrop');
     fireEvent.click(backdrop);
 
     // Dropdown should be gone
-    expect(screen.queryByTestId('rsa-dropdown-nav')).toBeNull();
+    expect(screen.queryByTestId('nhrats-dropdown-nav')).toBeNull();
   });
 
   it('closes the dropdown when Escape is pressed', async () => {
@@ -32,12 +32,12 @@ describe('Hamburger menu UX', () => {
     const moreBtn = await screen.findByLabelText('More menu');
     fireEvent.click(moreBtn);
 
-    expect(screen.getByTestId('rsa-dropdown-nav')).toBeInTheDocument();
+    expect(screen.getByTestId('nhrats-dropdown-nav')).toBeInTheDocument();
 
     // Press Escape
     fireEvent.keyDown(document, { key: 'Escape' });
 
-    expect(screen.queryByTestId('rsa-dropdown-nav')).toBeNull();
+    expect(screen.queryByTestId('nhrats-dropdown-nav')).toBeNull();
   });
 
   it('sets aria-expanded on the hamburger button', async () => {

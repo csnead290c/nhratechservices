@@ -33,7 +33,7 @@ function Home() {
 
   if (loading) {
     return (
-      <Page title="Racing Systems Analysis">
+      <Page title="NHRA Tech Services">
         <div className="text-center text-muted" style={{ padding: 'var(--space-6)' }}>
           Loading...
         </div>

@@ -1,4 +1,12 @@
-/* Design tokens for light and dark themes */
+/* Design tokens — NHRA Tech Services theme */
+
+/* NHRA Brand palette */
+:root {
+  --nhra-red:   #E61E2E;
+  --nhra-white: #FFFFFF;
+  --nhra-blue:  #262E87;
+  --nhra-black: #000000;
+}
 
 :root[data-theme='light'] {
   /* Colors */
@@ -6,12 +14,12 @@
   --color-bg-secondary: #f1f3f5;
   --color-surface: #f8f9fa;
   --color-surface-alt: #e9ecef;
-  --color-text: #213547;
+  --color-text: #111827;
   --color-text-muted: #6c757d;
   --color-muted: #6c757d;
-  --color-primary: #dc2626;
-  --color-accent: #dc2626;
-  --color-accent-hover: #b91c1c;
+  --color-primary: var(--nhra-blue);
+  --color-accent: var(--nhra-red);
+  --color-accent-hover: #c01020;
   --color-border: #dee2e6;
   --color-error: #dc3545;
   --color-success: #28a745;
@@ -49,8 +57,8 @@
   /* Layout */
   --size-container: 1100px;
 
-  /* Header */
-  --color-header-bg: #1a1a1a;
+  /* Header — NHRA blue */
+  --color-header-bg: var(--nhra-blue);
   --color-header-text: #ffffff;
 }
 
@@ -63,9 +71,9 @@
   --color-text: #e9ecef;
   --color-text-muted: #adb5bd;
   --color-muted: #adb5bd;
-  --color-primary: #ef4444;
-  --color-accent: #ef4444;
-  --color-accent-hover: #dc2626;
+  --color-primary: #4a56d4;
+  --color-accent: var(--nhra-red);
+  --color-accent-hover: #c01020;
   --color-border: #495057;
   --color-error: #f56565;
   --color-success: #48bb78;
@@ -103,8 +111,8 @@
   /* Layout */
   --size-container: 1100px;
 
-  /* Header */
-  --color-header-bg: #1a1a1a;
+  /* Header — dark navy */
+  --color-header-bg: #1a1f5c;
   --color-header-text: #e9ecef;
 }
 
