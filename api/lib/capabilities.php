@@ -124,6 +124,7 @@ const PLAN_CAPABILITIES = [
         'nhra.parity.admin',
         'nhra.tech.read',
         'nhra.tech.admin',
+        'rules.read',
         'sim.basic',
         'charts.basic',
         'weather.manual',
@@ -135,8 +136,8 @@ const PLAN_CAPABILITIES = [
 
 // Role-based capabilities (independent of subscription plan)
 const ROLE_CAPABILITIES = [
-    'owner' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
-    'admin' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
+    'owner' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
+    'admin' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
     'beta'  => ['admin.devTools'],
 ];
 

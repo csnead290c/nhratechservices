@@ -57,6 +57,8 @@ const ParityPortal = lazy(() => import('../pages/ParityPortal'));
 const ParityIdrViewer = lazy(() => import('../pages/ParityIdrViewer'));
 const IncidentAnalysis = lazy(() => import('../pages/IncidentAnalysis'));
 const TechMasterShell = lazy(() => import('../pages/TechMasterShell'));
+const RulesList = lazy(() => import('../pages/RulesList'));
+const RuleDetail = lazy(() => import('../pages/RuleDetail'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -459,7 +461,7 @@ function NhraHomeRedirect() {
 }
 
 // Redirect NHRA-only users away from any page they shouldn't be on.
-const NHRA_ALLOWED_PREFIXES = ['/parity', '/account', '/login', '/help'];
+const NHRA_ALLOWED_PREFIXES = ['/parity', '/account', '/login', '/help', '/rules'];
 
 function NhraPageGuard({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -738,6 +740,21 @@ function App() {
               <CapabilityRoute requireCap="nhra.parity">
                 <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
                   <ParityPortal />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            {/* Rules & Governance routes */}
+            <Route path="/rules/:id" element={
+              <CapabilityRoute requireCap="rules.read">
+                <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
+                  <RuleDetail />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/rules" element={
+              <CapabilityRoute requireCap="rules.read">
+                <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
+                  <RulesList />
                 </Suspense>
               </CapabilityRoute>
             } />
