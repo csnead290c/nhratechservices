@@ -17,6 +17,16 @@
 
 require_once 'config.php';
 require_once 'functions.php';
+
+// Stripe is disabled on NHRATS by default.
+// Remove this guard and configure STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET to re-enable.
+if (!defined('STRIPE_SECRET_KEY') || STRIPE_SECRET_KEY === '' || STRIPE_SECRET_KEY === 'sk_test_xxx') {
+    http_response_code(503);
+    header('Content-Type: application/json');
+    echo json_encode(['error' => 'Stripe is not configured on this server.']);
+    exit;
+}
+
 require_once __DIR__ . '/vendor/autoload.php';
 require_once __DIR__ . '/lib/audit.php';
 require_once __DIR__ . '/lib/plans.php';
