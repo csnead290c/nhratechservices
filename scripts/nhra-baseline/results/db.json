@@ -1,0 +1,182 @@
+[
+  {
+    "name": "parity_runs",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.163Z"
+  },
+  {
+    "name": "parity_runs_raw",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_run_imports",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_engine_combos",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_driver_combos",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_events",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_tracks",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_weather_canonical",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_weather_samples",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_class_aliases",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_class_defaults",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_body_styles",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "parity_driver_body_styles",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "null_race_lookups",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  },
+  {
+    "name": "current_db",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Missing env vars: NHRATS_DB_HOST, NHRATS_DB_NAME, NHRATS_DB_USER, NHRATS_DB_PASSWORD",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:54.164Z"
+  }
+]

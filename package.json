@@ -21,7 +21,13 @@
     "test:e2e:auth": "playwright test e2e/auth",
     "test:e2e:tech": "playwright test e2e/tech-master",
     "manuals:sync": "node scripts/sync-manuals.js",
-    "manuals:check": "node scripts/check-manuals.js"
+    "manuals:check": "node scripts/check-manuals.js",
+    "baseline:nhra": "node scripts/nhra-baseline/run-baseline.mjs",
+    "baseline:nhra:api": "node scripts/nhra-baseline/check-api.mjs",
+    "baseline:nhra:db": "node scripts/nhra-baseline/check-db.mjs",
+    "baseline:nhra:config": "node scripts/nhra-baseline/check-prod-config.mjs",
+    "baseline:nhra:rsa": "node scripts/nhra-baseline/check-rsa-isolation.mjs",
+    "baseline:nhra:browser": "playwright test scripts/nhra-baseline/check-browser.spec.ts"
   },
   "dependencies": {
     "@stripe/react-stripe-js": "^5.4.1",

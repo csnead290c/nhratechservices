@@ -1,0 +1,39 @@
+[
+  {
+    "name": "NHRATS HTTP (https://nhratechservices.com)",
+    "status": "PASS",
+    "detail": "HTTP 200",
+    "missingEnv": null,
+    "timestamp": "2026-05-08T13:29:53.463Z"
+  },
+  {
+    "name": "RSA HTTP (https://racingsystemsanalysis.com)",
+    "status": "PASS",
+    "detail": "HTTP 200",
+    "missingEnv": null,
+    "timestamp": "2026-05-08T13:29:53.771Z"
+  },
+  {
+    "name": "DB comparison",
+    "status": "BLOCKED — ACCESS NEEDED",
+    "detail": "Neither NHRATS nor RSA DB credentials available",
+    "missingEnv": [
+      "NHRATS_DB_HOST",
+      "NHRATS_DB_NAME",
+      "NHRATS_DB_USER",
+      "NHRATS_DB_PASSWORD",
+      "RSA_DB_HOST",
+      "RSA_DB_NAME",
+      "RSA_DB_USER",
+      "RSA_DB_PASSWORD"
+    ],
+    "timestamp": "2026-05-08T13:29:53.771Z"
+  },
+  {
+    "name": "JWT isolation",
+    "status": "NOT TESTED",
+    "detail": "Requires cross-site token validation — not automated to avoid token leakage risk",
+    "missingEnv": null,
+    "timestamp": "2026-05-08T13:29:53.771Z"
+  }
+]
