@@ -138,7 +138,8 @@ function admin_inviteUser(PDO $pdo, int $adminUserId, array $input): array {
     ]);
     
     // TODO: Send invite email with token
-    $inviteUrl = "https://racingsystemsanalysis.com/register?invite=$token";
+    $frontendUrl = defined('FRONTEND_URL') ? FRONTEND_URL : 'https://nhratechservices.com';
+    $inviteUrl = $frontendUrl . '/register?invite=' . urlencode($token);
     
     return [
         'success' => true,

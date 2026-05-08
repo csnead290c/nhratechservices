@@ -145,14 +145,14 @@ function rsa_getClientIp(): string {
  * @return bool Whether the email was sent successfully
  */
 function rsa_sendPasswordResetEmail(string $toEmail, string $userName, string $resetToken): bool {
-    $frontendUrl = defined('FRONTEND_URL') ? FRONTEND_URL : 'https://racingsystemsanalysis.com';
+    $frontendUrl = defined('FRONTEND_URL') ? FRONTEND_URL : 'https://nhratechservices.com';
     $resetLink = $frontendUrl . '/reset-password?token=' . urlencode($resetToken);
 
-    $subject = 'Password Reset — Racing Systems Analysis';
+    $subject = 'Password Reset — NHRA Tech Services';
     $body = <<<EMAIL
 Hi {$userName},
 
-We received a request to reset your password for Racing Systems Analysis.
+We received a request to reset your password for NHRA Tech Services.
 
 Click the link below to set a new password (expires in 60 minutes):
 
@@ -160,14 +160,14 @@ Click the link below to set a new password (expires in 60 minutes):
 
 If you didn't request this, you can safely ignore this email.
 
-— Racing Systems Analysis
+— NHRA Tech Services
 EMAIL;
 
     $headers = implode("\r\n", [
-        'From: Racing Systems Analysis <noreply@racingsystemsanalysis.com>',
-        'Reply-To: noreply@racingsystemsanalysis.com',
+        'From: NHRA Tech Services <noreply@nhratechservices.com>',
+        'Reply-To: noreply@nhratechservices.com',
         'Content-Type: text/plain; charset=UTF-8',
-        'X-Mailer: RSA-Auth/1.0',
+        'X-Mailer: NHRATS-Auth/1.0',
     ]);
 
     return mail($toEmail, $subject, $body, $headers);

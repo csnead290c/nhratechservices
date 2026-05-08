@@ -11,30 +11,33 @@ define('DB_NAME', 'your_database_name');
 define('DB_USER', 'your_username');
 define('DB_PASS', 'your_password');
 
-// JWT Secret for token signing (change this to a random string)
-define('JWT_SECRET', 'change_this_to_a_random_secret_string');
+// JWT Secret for token signing
+// REQUIRED: Generate a strong random secret (e.g. openssl rand -hex 64)
+// Never commit the real secret. Keep this value unique per environment.
+define('JWT_SECRET', 'REQUIRED_GENERATE_A_STRONG_RANDOM_SECRET');
 
 // CORS settings
-define('ALLOWED_ORIGIN', '*'); // Change to your domain in production
+define('ALLOWED_ORIGIN', 'https://nhratechservices.com');
 
 // =============================================================================
-// Stripe Configuration
-// Get these from https://dashboard.stripe.com/apikeys
+// Stripe Configuration — DISABLED on NHRATS by default
+// Stripe is not used on NHRA Tech Services. These constants are preserved
+// for compatibility but should remain as placeholders unless Stripe is
+// explicitly re-enabled for NHRATS billing in the future.
 // =============================================================================
-define('STRIPE_SECRET_KEY', 'sk_test_xxx'); // Secret key (starts with sk_)
-define('STRIPE_WEBHOOK_SECRET', 'whsec_xxx'); // Webhook signing secret
+define('STRIPE_SECRET_KEY', '');
+define('STRIPE_WEBHOOK_SECRET', '');
 
-// Stripe Price IDs for subscription plans
-// Get these from https://dashboard.stripe.com/products
-define('STRIPE_PRICE_RACER_MONTHLY', 'price_xxx');
-define('STRIPE_PRICE_RACER_YEARLY', 'price_xxx');
-define('STRIPE_PRICE_PRO_MONTHLY', 'price_xxx');
-define('STRIPE_PRICE_PRO_YEARLY', 'price_xxx');
-define('STRIPE_PRICE_TEAM_MONTHLY', 'price_xxx');
-define('STRIPE_PRICE_TEAM_YEARLY', 'price_xxx');
+// Stripe Price IDs for subscription plans (not used on NHRATS)
+define('STRIPE_PRICE_RACER_MONTHLY', '');
+define('STRIPE_PRICE_RACER_YEARLY', '');
+define('STRIPE_PRICE_PRO_MONTHLY', '');
+define('STRIPE_PRICE_PRO_YEARLY', '');
+define('STRIPE_PRICE_TEAM_MONTHLY', '');
+define('STRIPE_PRICE_TEAM_YEARLY', '');
 
-// Frontend URLs for Stripe redirects
-define('FRONTEND_URL', 'https://racingsystemsanalysis.com');
+// Frontend URL
+define('FRONTEND_URL', 'https://nhratechservices.com');
 define('STRIPE_SUCCESS_URL', FRONTEND_URL . '/account?checkout=success');
 define('STRIPE_CANCEL_URL', FRONTEND_URL . '/account?checkout=canceled');
 
