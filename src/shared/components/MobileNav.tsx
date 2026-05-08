@@ -2,10 +2,15 @@
  * Mobile Navigation Component
  * 
  * Bottom navigation bar for mobile devices with quick access to key features.
+ * Respects NHRA-only users: shows Parity-focused nav instead of RSA sim tools.
+ * NOTE: This component is not currently imported in the app; the desktop
+ * Navigation in App.tsx handles all nav rendering including mobile.
  */
 
 import { Link, useLocation } from 'react-router-dom';
 import { useIsMobile } from '../hooks/useResponsive';
+import { useCapabilities } from '../../domain/config/useCapabilities';
+import { useAuth } from '../../domain/auth';
 
 interface NavItem {
   path: string;
@@ -13,7 +18,7 @@ interface NavItem {
   icon: string;
 }
 
-const NAV_ITEMS: NavItem[] = [
+const RSA_NAV_ITEMS: NavItem[] = [
   { path: '/', label: 'Home', icon: '🏠' },
   { path: '/predict', label: 'Sim', icon: '🏎️' },
   { path: '/history', label: 'Runs', icon: '📝' },
@@ -21,13 +26,23 @@ const NAV_ITEMS: NavItem[] = [
   { path: '/calculators', label: 'Calcs', icon: '🔢' },
 ];
 
+const NHRA_NAV_ITEMS: NavItem[] = [
+  { path: '/parity', label: 'Parity', icon: '📊' },
+  { path: '/help', label: 'Help', icon: '❓' },
+];
+
 export default function MobileNav() {
   const isMobile = useIsMobile();
   const location = useLocation();
+  const { isAuthenticated } = useAuth();
+  const { plan } = useCapabilities();
 
   if (!isMobile) {
     return null;
   }
+
+  const isNhraOnlyUser = isAuthenticated && plan === 'nhra';
+  const items = isNhraOnlyUser ? NHRA_NAV_ITEMS : RSA_NAV_ITEMS;
 
   return (
     <nav style={{
@@ -44,7 +59,7 @@ export default function MobileNav() {
       paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
       zIndex: 1000,
     }}>
-      {NAV_ITEMS.map((item) => {
+      {items.map((item) => {
         const isActive = location.pathname === item.path;
         return (
           <Link
