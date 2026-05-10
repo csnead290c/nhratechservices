@@ -1,0 +1,72 @@
+{
+  "source": "sample",
+  "import_version": 1,
+  "metadata": {
+    "description": "Sample rules for testing import validation and dry-run functionality",
+    "created_by": "system",
+    "created_at": "2026-05-10T00:00:00Z",
+    "notes": "These are fake/test rules only. Do not import to production."
+  },
+  "rules": [
+    {
+      "rule_number": "GEN-1.1",
+      "category": "General",
+      "class_scope": "All",
+      "title": "Eligibility Requirements",
+      "body": "All competitors must hold a valid NHRA competition license appropriate for their class. Licenses must be presented at technical inspection.",
+      "status": "active",
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "version_number": 1,
+      "change_summary": "Initial version for 2026 season."
+    },
+    {
+      "rule_number": "SAF-2.1",
+      "category": "Safety",
+      "class_scope": "Pro,ProMod,TopSportsman",
+      "title": "Fire Suppression System Requirements",
+      "body": "Vehicles in professional categories must be equipped with a minimum 5-pound fire suppression system mounted in the driver's compartment. System must be SFI 17.1 or 17.2 certified.",
+      "status": "active",
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "version_number": 2,
+      "change_summary": "Updated certification requirements for 2026."
+    },
+    {
+      "rule_number": "TECH-3.2",
+      "category": "Technical",
+      "class_scope": "SuperStock,Stock",
+      "title": "Engine Displacement Verification",
+      "body": "Engine displacement will be verified by technical inspectors using the formula: Bore² × Stroke × Number of Cylinders × 0.7854. Maximum allowable variance is +0.5%.",
+      "status": "active",
+      "effective_from": "2025-06-01",
+      "effective_to": "2026-12-31",
+      "version_number": 1,
+      "change_summary": "Initial rule for Sportsman classes."
+    },
+    {
+      "rule_number": "COMP-4.1",
+      "category": "Competition",
+      "class_scope": "All",
+      "title": "Breakout Rule",
+      "body": "In bracket racing classes, running quicker than your dial-in or index results in disqualification unless both competitors run under, in which case the closer to index wins.",
+      "status": "active",
+      "effective_from": "2026-01-01",
+      "effective_to": null,
+      "version_number": 1,
+      "change_summary": "Standard breakout rule for bracket racing."
+    },
+    {
+      "rule_number": "VEH-5.3",
+      "category": "Vehicle",
+      "class_scope": null,
+      "title": "Window Net Requirements",
+      "body": "All vehicles must have a window net installed and in operational condition. Net must be SFI 27.1 certified and mounted securely. Quick-release mechanisms must be functional.",
+      "status": "proposed",
+      "effective_from": "2026-07-01",
+      "effective_to": null,
+      "version_number": 1,
+      "change_summary": "Proposed update to window net mounting specifications."
+    }
+  ]
+}

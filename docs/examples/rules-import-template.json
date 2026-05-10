@@ -1,0 +1,103 @@
+{
+  "_description": "NHRATS Rules & Governance Import Format Template",
+  "_version": 1,
+  "_notes": [
+    "source: identifies the origin of this import (e.g., 'manual', 'nhra-pdf-2026', 'legacy-system')",
+    "import_version: format version number for backward compatibility",
+    "Import ID is generated automatically during processing",
+    "UUIDs are generated automatically for each rule if not provided"
+  ],
+  "source": "template",
+  "import_version": 1,
+  "metadata": {
+    "description": "Optional metadata about this import batch",
+    "created_by": "user-id-or-email",
+    "created_at": "2026-01-01T00:00:00Z",
+    "notes": "Optional notes about this import"
+  },
+  "rules": [
+    {
+      "_description": "Template for a single rule",
+      "rule_number": "CATEGORY-SECTION.NUMBER",
+      "category": "General|Safety|Technical|Competition|Vehicle|Equipment",
+      "class_scope": "All|Specific class codes or null for all",
+      "title": "Required: Brief, descriptive title",
+      "body": "Required: Full rule text. Supports basic formatting.",
+      "status": "active|superseded|proposed|deleted",
+      "effective_from": "YYYY-MM-DD",
+      "effective_to": null,
+      "version_number": 1,
+      "change_summary": "Description of changes in this version"
+    }
+  ],
+  "_field_descriptions": {
+    "rule_number": {
+      "required": true,
+      "type": "string",
+      "max_length": 50,
+      "description": "Unique identifier for the rule (e.g., GEN-1.1, SAF-2.3)",
+      "validation": "Must be unique within the import and not conflict with existing rules"
+    },
+    "category": {
+      "required": true,
+      "type": "string",
+      "max_length": 100,
+      "description": "High-level category for grouping rules",
+      "examples": ["General", "Safety", "Technical", "Competition", "Vehicle", "Equipment"]
+    },
+    "class_scope": {
+      "required": false,
+      "type": "string|null",
+      "max_length": 255,
+      "description": "Comma-separated list of class codes this applies to, or null for all",
+      "examples": ["All", "Pro,ProMod,TopSportsman", "SuperStock,Stock"]
+    },
+    "title": {
+      "required": true,
+      "type": "string",
+      "max_length": 500,
+      "description": "Human-readable title for the rule"
+    },
+    "body": {
+      "required": true,
+      "type": "string",
+      "description": "Full text of the rule"
+    },
+    "status": {
+      "required": true,
+      "type": "enum",
+      "allowed_values": ["active", "superseded", "proposed", "deleted"],
+      "default": "active",
+      "description": "Current status of the rule"
+    },
+    "effective_from": {
+      "required": true,
+      "type": "date",
+      "format": "YYYY-MM-DD",
+      "description": "Date when this rule becomes effective"
+    },
+    "effective_to": {
+      "required": false,
+      "type": "date|null",
+      "format": "YYYY-MM-DD",
+      "description": "Date when this rule expires, or null if ongoing"
+    },
+    "version_number": {
+      "required": true,
+      "type": "integer",
+      "min": 1,
+      "description": "Version number, starting at 1 for new rules"
+    },
+    "change_summary": {
+      "required": false,
+      "type": "string",
+      "description": "Description of what changed in this version"
+    }
+  },
+  "_validation_rules": {
+    "date_order": "effective_to must be null or later than effective_from",
+    "unique_rule_numbers": "All rule_numbers within the import must be unique",
+    "non_empty_content": "title and body must contain non-whitespace content",
+    "positive_version": "version_number must be >= 1"
+  }
+}
