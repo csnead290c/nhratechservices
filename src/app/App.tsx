@@ -10,6 +10,7 @@ import {
   RACE_TOOLS_FEATURE,
   RUN_LOGGING_FEATURE,
   VEHICLES_FEATURE,
+  canAccessEtSim,
 } from '../domain/config/guards';
 import { RunHistoryProvider } from '../shared/state/runHistoryStore';
 import { PreferencesProvider } from '../shared/state/preferences';
@@ -244,6 +245,7 @@ function Navigation() {
   // NHRA-specific navigation
   const canAccessParity = isLoggedIn && can('nhra.parity');
   const canAccessTechMaster = isLoggedIn && can('nhra.tech.read');
+  const canAccessRules = isLoggedIn && can('rules.read');
 
   // NHRA-only users: identified by plan, not by capability exclusion
   // (NHRA plan includes sim.basic which would break the old capability check)
@@ -256,6 +258,12 @@ function Navigation() {
     // NHRA users: Parity is the home — no general RSA nav
     <>
       <Link to="/parity" style={navLinkStyle(isActive('/parity'))} onClick={close}>Parity</Link>
+      {canAccessTechMaster && (
+        <Link to="/tech" style={navLinkStyle(isActive('/tech'))} onClick={close}>Tech Master</Link>
+      )}
+      {canAccessRules && (
+        <Link to="/rules" style={navLinkStyle(isActive('/rules'))} onClick={close}>Rules</Link>
+      )}
     </>
   ) : (
     <>
@@ -278,7 +286,7 @@ function Navigation() {
 
   // ── Secondary links: hamburger menu only ──
   const secondaryLinks = isNhraOnlyUser ? (
-    // NHRA users: only parity + help
+    // NHRA users: parity nav items + help + admin (if applicable)
     <>
       <Link to="/help" style={navLinkStyle(isActive('/help'))} onClick={close}>Help</Link>
       {isDevOrOwner && (

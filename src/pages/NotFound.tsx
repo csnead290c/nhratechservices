@@ -1,65 +1,42 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../domain/auth';
 import { useCapabilities } from '../domain/config/useCapabilities';
-import { getQuarterProgramName, getEngineProgramName } from '../domain/ui/programDisplayNames';
-import type { Capability } from '../domain/config/capabilities';
 import {
-  PUBLIC_CORE_ROUTES,
-  INTERNAL_ROUTES,
   isInternalUser,
   buildVisibilityContext,
 } from '../domain/ui/publicSurface';
 
-function labelForCoreRoute(
-  path: (typeof PUBLIC_CORE_ROUTES)[number],
-  can: (cap: Capability) => boolean,
-): string {
-  switch (path) {
-    case '/et-sim':
-      return getQuarterProgramName(can);
-    case '/engine-sim':
-      return getEngineProgramName(can);
-    case '/vehicles':
-      return 'Vehicles';
-    case '/calculators':
-      return 'Calculators';
-    case '/about':
-      return 'About';
-    default:
-      return path;
-  }
-}
-
-function iconForCoreRoute(path: (typeof PUBLIC_CORE_ROUTES)[number]): string {
-  switch (path) {
-    case '/et-sim':
-      return '🏁';
-    case '/engine-sim':
-      return '🔧';
-    case '/vehicles':
-      return '🚗';
-    case '/calculators':
-      return '🔢';
-    case '/about':
-      return 'ℹ️';
-    default:
-      return '➡️';
-  }
+interface ModuleLink {
+  to: string;
+  label: string;
+  icon: string;
+  requiresCap?: string;
 }
 
 export default function NotFound() {
   const { user } = useAuth();
-  const { can } = useCapabilities();
+  const { can, plan } = useCapabilities();
   const internal = isInternalUser(buildVisibilityContext(user?.roleId));
   const showInternalLinks = user?.roleId === 'owner' || user?.roleId === 'admin';
+  const isNhraUser = plan === 'nhra';
 
-  const coreLinks = PUBLIC_CORE_ROUTES.map((path) => ({
-    to: path,
-    label: labelForCoreRoute(path, can),
-    icon: iconForCoreRoute(path),
-  }));
+  // NHRA Tech Services modules (shown for NHRA users or as primary modules)
+  const nhratsModules: ModuleLink[] = [
+    { to: '/parity', label: 'Parity & Performance', icon: '📊', requiresCap: 'nhra.parity' },
+    { to: '/tech', label: 'Tech Master', icon: '🔍', requiresCap: 'nhra.tech.read' },
+    { to: '/rules', label: 'Rules & Governance', icon: '📋', requiresCap: 'rules.read' },
+    { to: '/account', label: 'Account', icon: '👤' },
+  ];
 
-  const internalLinks = Array.from(new Set(Object.keys(INTERNAL_ROUTES))).sort();
+  // Filter modules by capability if user is logged in
+  const availableModules = isNhraUser
+    ? nhratsModules.filter(m => !m.requiresCap || can(m.requiresCap as any))
+    : nhratsModules.filter(m => !m.requiresCap); // For non-NHRA, show only public modules
+
+  // Add admin link for admin users
+  if (showInternalLinks) {
+    availableModules.push({ to: '/admin', label: 'Admin Portal', icon: '⚙️' });
+  }
 
   return (
     <div
@@ -86,21 +63,21 @@ export default function NotFound() {
           fontSize: '0.9rem',
         }}
       >
-        That route doesn&apos;t exist. Here are the core modules available in RSA:
+        That route doesn&apos;t exist. Here are the core modules available in NHRA Tech Services:
       </p>
 
       <div
-        data-testid="rsa-notfound-core-links"
+        data-testid="nhrats-notfound-modules"
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
           gap: '0.5rem',
           width: '100%',
           maxWidth: '520px',
           marginBottom: internal ? '1.25rem' : '0',
         }}
       >
-        {coreLinks.map((mod) => (
+        {availableModules.map((mod) => (
           <Link
             key={mod.to}
             to={mod.to}
@@ -139,23 +116,34 @@ export default function NotFound() {
             Internal links
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-            {internalLinks.map((path) => (
-              <Link
-                key={path}
-                to={path}
-                style={{
-                  padding: '0.35rem 0.6rem',
-                  borderRadius: '999px',
-                  backgroundColor: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text)',
-                  textDecoration: 'none',
-                  fontSize: '0.75rem',
-                }}
-              >
-                {path}
-              </Link>
-            ))}
+            <Link
+              to="/dev"
+              style={{
+                padding: '0.35rem 0.6rem',
+                borderRadius: '999px',
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text)',
+                textDecoration: 'none',
+                fontSize: '0.75rem',
+              }}
+            >
+              /dev
+            </Link>
+            <Link
+              to="/incidents"
+              style={{
+                padding: '0.35rem 0.6rem',
+                borderRadius: '999px',
+                backgroundColor: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text)',
+                textDecoration: 'none',
+                fontSize: '0.75rem',
+              }}
+            >
+              /incidents
+            </Link>
           </div>
         </div>
       )}

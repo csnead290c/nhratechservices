@@ -28,6 +28,8 @@ const RSA_NAV_ITEMS: NavItem[] = [
 
 const NHRA_NAV_ITEMS: NavItem[] = [
   { path: '/parity', label: 'Parity', icon: '📊' },
+  { path: '/tech', label: 'Tech', icon: '🔍' },
+  { path: '/rules', label: 'Rules', icon: '📋' },
   { path: '/help', label: 'Help', icon: '❓' },
 ];
 
@@ -35,14 +37,22 @@ export default function MobileNav() {
   const isMobile = useIsMobile();
   const location = useLocation();
   const { isAuthenticated } = useAuth();
-  const { plan } = useCapabilities();
+  const { can, plan } = useCapabilities();
 
   if (!isMobile) {
     return null;
   }
 
   const isNhraOnlyUser = isAuthenticated && plan === 'nhra';
-  const items = isNhraOnlyUser ? NHRA_NAV_ITEMS : RSA_NAV_ITEMS;
+
+  // Filter NHRA nav items by capability
+  const items = isNhraOnlyUser
+    ? NHRA_NAV_ITEMS.filter(item => {
+        if (item.path === '/tech') return can('nhra.tech.read');
+        if (item.path === '/rules') return can('rules.read');
+        return true; // parity and help are always visible for NHRA users
+      })
+    : RSA_NAV_ITEMS;
 
   return (
     <nav style={{
