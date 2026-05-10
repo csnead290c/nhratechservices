@@ -82,21 +82,25 @@ jobs:
       # NOTE: Database migrations are NOT run by this workflow.
       # After deploying a new module, an admin must manually run the migration endpoint.
       # See README.md "Post-Deploy Migrations" and docs/INCIDENT_ANALYSIS_RECOVERY.md
+      # NOTE: config.php is NOT in this repo (contains secrets). It must exist on the
+      # server at api/config.php with production DB credentials. The exclude pattern
+      # below preserves the existing server config.php during deploy.
       - name: Copy API to dist
         run: |
           echo "Copying API files to dist..."
           cp -r api dist/
-          rm -f dist/api/config.php
           echo "API files copied successfully"
           echo "Verifying dist contents:"
           ls -la dist/ | head -10
 
-      - name: Deploy via FTP
+      - name: Deploy via SFTP
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
           server: ${{ secrets.FTP_SERVER }}
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
+          protocol: sftp
+          port: 18765
           local-dir: ./dist/
           server-dir: ./nhratechservices.com/public_html/
           dangerous-clean-slate: false
@@ -104,3 +108,4 @@ jobs:
             **/.git*
             **/node_modules/**
             **/.htaccess
+            **/config.php
