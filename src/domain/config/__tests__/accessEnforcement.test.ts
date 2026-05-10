@@ -61,6 +61,11 @@ describe('Access Enforcement', () => {
       expect(hasCap(ctx, 'nhra.tech.read')).toBe(false);
     });
 
+    it('CANNOT access rules', () => {
+      expect(hasCap(ctx, 'rules.read')).toBe(false);
+      expect(hasCap(ctx, 'rules.admin')).toBe(false);
+    });
+
     it('CANNOT access pro features', () => {
       expect(hasCap(ctx, 'vehicle.editor.pro')).toBe(false);
       expect(hasCap(ctx, 'engine.proMode')).toBe(false);
@@ -90,6 +95,14 @@ describe('Access Enforcement', () => {
 
     it('can access NHRA tech master admin', () => {
       expect(hasCap(ctx, 'nhra.tech.admin')).toBe(true);
+    });
+
+    it('can access rules.read', () => {
+      expect(hasCap(ctx, 'rules.read')).toBe(true);
+    });
+
+    it('cannot access rules.admin', () => {
+      expect(hasCap(ctx, 'rules.admin')).toBe(false);
     });
 
     it('can access incidents', () => {
@@ -289,6 +302,11 @@ describe('Access Enforcement', () => {
       expect(hasCap(ctx, 'nhra.parity')).toBe(true);
       expect(hasCap(ctx, 'nhra.tech.read')).toBe(true);
       expect(hasCap(ctx, 'nhra.tech.admin')).toBe(true);
+      expect(hasCap(ctx, 'rules.read')).toBe(true);
+    });
+
+    it('can access rules.admin from role', () => {
+      expect(hasCap(ctx, 'rules.admin')).toBe(true);
     });
 
     it('can edit all incidents from role', () => {

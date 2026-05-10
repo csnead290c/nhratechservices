@@ -173,6 +173,52 @@ describe('incident capabilities in PLAN_CAPABILITIES', () => {
 });
 
 // =========================================================================
+// Rules & Governance capabilities in PLAN_CAPABILITIES
+// =========================================================================
+describe('rules capabilities in PLAN_CAPABILITIES', () => {
+  it('nhra plan grants rules.read', () => {
+    expect(PLAN_CAPABILITIES.nhra.has('rules.read')).toBe(true);
+  });
+
+  it('nhra plan does NOT grant rules.admin', () => {
+    expect(PLAN_CAPABILITIES.nhra.has('rules.admin')).toBe(false);
+  });
+
+  it('free plan does NOT grant rules.read or rules.admin', () => {
+    expect(PLAN_CAPABILITIES.free.has('rules.read')).toBe(false);
+    expect(PLAN_CAPABILITIES.free.has('rules.admin')).toBe(false);
+  });
+
+  it('basic/pro/team plans do NOT grant rules capabilities', () => {
+    for (const plan of ['basic', 'pro', 'team'] as const) {
+      expect(PLAN_CAPABILITIES[plan].has('rules.read')).toBe(false);
+      expect(PLAN_CAPABILITIES[plan].has('rules.admin')).toBe(false);
+    }
+  });
+});
+
+// =========================================================================
+// Rules & Governance capabilities in ROLE_CAPABILITIES
+// =========================================================================
+describe('rules capabilities in ROLE_CAPABILITIES', () => {
+  it('owner role grants rules.admin', () => {
+    expect(ROLE_CAPABILITIES.owner.has('rules.admin')).toBe(true);
+  });
+
+  it('admin role grants rules.admin', () => {
+    expect(ROLE_CAPABILITIES.admin.has('rules.admin')).toBe(true);
+  });
+
+  it('member role does NOT grant rules.admin', () => {
+    expect(ROLE_CAPABILITIES.member.has('rules.admin')).toBe(false);
+  });
+
+  it('viewer role does NOT grant rules.admin', () => {
+    expect(ROLE_CAPABILITIES.viewer.has('rules.admin')).toBe(false);
+  });
+});
+
+// =========================================================================
 // hasCap (namespaced keys)
 // =========================================================================
 describe('hasCap', () => {
