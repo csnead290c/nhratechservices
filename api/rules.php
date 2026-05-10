@@ -62,6 +62,13 @@ switch ($action) {
 // ─── Handlers ──────────────────────────────────────────────────────────
 
 function handleListRules(PDO $pdo): void {
+    // Check if rules table exists
+    if (!tableExists($pdo, 'rules')) {
+        http_response_code(503);
+        echo json_encode(['error' => 'Rules module not initialized. Migration required.', 'rules' => [], 'count' => 0]);
+        return;
+    }
+
     $where = ['r.deleted_at IS NULL'];
     $params = [];
 
@@ -102,6 +109,13 @@ function handleListRules(PDO $pdo): void {
 }
 
 function handleGetRule(PDO $pdo): void {
+    // Check if rules table exists
+    if (!tableExists($pdo, 'rules')) {
+        http_response_code(503);
+        echo json_encode(['error' => 'Rules module not initialized. Migration required.']);
+        return;
+    }
+
     $id = $_GET['id'] ?? null;
     if (!$id) {
         http_response_code(400);
@@ -155,10 +169,28 @@ function handleListVersions(PDO $pdo): void {
 }
 
 function handleListCategories(PDO $pdo): void {
+    // Check if rules table exists
+    if (!tableExists($pdo, 'rules')) {
+        http_response_code(503);
+        echo json_encode(['error' => 'Rules module not initialized. Migration required.', 'categories' => []]);
+        return;
+    }
+
     $stmt = $pdo->query(
         "SELECT DISTINCT category FROM rules WHERE deleted_at IS NULL ORDER BY category ASC"
     );
     $categories = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     echo json_encode(['categories' => $categories]);
+}
+
+// Helper: Check if a table exists
+function tableExists(PDO $pdo, string $tableName): bool {
+    try {
+        $stmt = $pdo->prepare("SHOW TABLES LIKE ?");
+        $stmt->execute([$tableName]);
+        return $stmt->rowCount() > 0;
+    } catch (PDOException $e) {
+        return false;
+    }
 }
