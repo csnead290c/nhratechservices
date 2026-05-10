@@ -39,7 +39,7 @@ jobs:
         env:
           VITE_CLERK_PUBLISHABLE_KEY: ${{ secrets.VITE_CLERK_PUBLISHABLE_KEY }}
           VITE_STRIPE_PUBLISHABLE_KEY: ${{ secrets.VITE_STRIPE_PUBLISHABLE_KEY }}
-          VITE_API_URL: https://racingsystemsanalysis.com/api
+          VITE_API_URL: https://nhratechservices.com/api
 
       - name: Post-build cleanup
         run: node -e "const fs=require('fs');const f='dist/index.html';fs.writeFileSync(f,fs.readFileSync(f,'utf8').replace(/<script id=\"vite-plugin-pwa:register-sw\" src=\"\/registerSW.js\"><\/script>/g,''))"
@@ -98,7 +98,7 @@ jobs:
           username: ${{ secrets.FTP_USERNAME }}
           password: ${{ secrets.FTP_PASSWORD }}
           local-dir: ./dist/
-          server-dir: ./racingsystemsanalysis.com/public_html/
+          server-dir: ./nhratechservices.com/public_html/
           dangerous-clean-slate: false
           exclude: |
             **/.git*
