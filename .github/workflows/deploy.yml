@@ -97,87 +97,37 @@ jobs:
         run: |
           echo "=== Preflight Validation ==="
           MISSING=0
-          if [ -z "${{ secrets.FTP_SERVER }}" ]; then echo "✗ Missing: FTP_SERVER"; MISSING=1; else echo "✓ FTP_SERVER present"; fi
-          if [ -z "${{ secrets.FTP_USERNAME }}" ]; then echo "✗ Missing: FTP_USERNAME"; MISSING=1; else echo "✓ FTP_USERNAME present"; fi
-          if [ -z "${{ secrets.FTP_PASSWORD }}" ]; then echo "✗ Missing: FTP_PASSWORD"; MISSING=1; else echo "✓ FTP_PASSWORD present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_HOST }}" ]; then echo "✗ Missing: SITEGROUND_SSH_HOST"; MISSING=1; else echo "✓ SITEGROUND_SSH_HOST present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_USER }}" ]; then echo "✗ Missing: SITEGROUND_SSH_USER"; MISSING=1; else echo "✓ SITEGROUND_SSH_USER present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_PORT }}" ]; then echo "✗ Missing: SITEGROUND_SSH_PORT"; MISSING=1; else echo "✓ SITEGROUND_SSH_PORT present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_PRIVATE_KEY }}" ]; then echo "✗ Missing: SITEGROUND_SSH_PRIVATE_KEY"; MISSING=1; else echo "✓ SITEGROUND_SSH_PRIVATE_KEY present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_PASSPHRASE }}" ]; then echo "⚠ Optional: SITEGROUND_SSH_PASSPHRASE not set (unencrypted key)"; else echo "✓ SITEGROUND_SSH_PASSPHRASE present"; fi
           if [ $MISSING -eq 1 ]; then
-            echo "✗ FAIL: Required secrets missing. Cannot deploy."
+            echo "✗ FAIL: Required SSH secrets missing. Cannot deploy."
+            echo "See docs/github-actions-ssh-deploy-setup.md for setup instructions."
             exit 1
           fi
-          echo "✓ All required FTP secrets present"
+          echo "✓ All required SSH secrets present"
 
-      - name: FTP Diagnostic (determine protocol and path)
+      - name: Setup SSH key
         run: |
-          echo "Installing lftp..."
-          sudo apt-get update && sudo apt-get install -y lftp
-          
-          echo ""
-          echo "=== FTP Diagnostic: Testing connection modes ==="
-          
-          FTP_SERVER="${{ secrets.FTP_SERVER }}"
-          FTP_USER="${{ secrets.FTP_USERNAME }}"
-          FTP_PASS="${{ secrets.FTP_PASSWORD }}"
-          
-          echo "Attempting A: Explicit FTPS (FTP over TLS)..."
-          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER" << 'DIAG1' 2>&1 || echo "Explicit FTPS failed"
-          set ftp:ssl-allow yes
-          set ftp:ssl-force false
-          set ftp:ssl-protect-data true
-          set ftp:passive-mode yes
-          set net:max-retries 1
-          set net:timeout 10
-          pwd
-          ls
-          bye
-          DIAG1
-          
-          echo ""
-          echo "Attempting B: Plain FTP..."
-          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "ftp://$FTP_SERVER" << 'DIAG2' 2>&1 || echo "Plain FTP failed"
-          set ftp:ssl-allow false
-          set ftp:passive-mode yes
-          set net:max-retries 1
-          set net:timeout 10
-          pwd
-          ls
-          bye
-          DIAG2
-          
-          echo ""
-          echo "Attempting C: Implicit FTPS..."
-          lftp -u "$FTP_USER","$FTP_PASS" -p 990 "ftps://$FTP_SERVER" << 'DIAG3' 2>&1 || echo "Implicit FTPS failed"
-          set ftp:ssl-force true
-          set ftp:passive-mode yes
-          set net:max-retries 1
-          set net:timeout 10
-          pwd
-          ls
-          bye
-          DIAG3
-          
-          echo ""
-          echo "=== FTP Diagnostic Complete ==="
-          echo "Review logs above to determine working protocol and path"
-        continue-on-error: true
+          echo "Setting up SSH deploy key..."
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SITEGROUND_SSH_PRIVATE_KEY }}" > ~/.ssh/siteground_deploy_key
+          chmod 600 ~/.ssh/siteground_deploy_key
+          echo "SSH deploy key written"
+          ssh-keyscan -p "${{ secrets.SITEGROUND_SSH_PORT }}" "${{ secrets.SITEGROUND_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "Host added to known_hosts"
 
-      - name: Deploy via FTP/FTPS using lftp
+      - name: Deploy via SSH/rsync
         run: |
-          echo "Deploying to SiteGround..."
-          FTP_SERVER="${{ secrets.FTP_SERVER }}"
-          FTP_USER="${{ secrets.FTP_USERNAME }}"
-          FTP_PASS="${{ secrets.FTP_PASSWORD }}"
-          
-          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER" << EOF
-          set ftp:ssl-allow yes
-          set ftp:ssl-force false
-          set ftp:ssl-protect-data true
-          set ftp:passive-mode yes
-          set ssl:verify-certificate no
-          set net:max-retries 2
-          set net:timeout 30
-          mirror -R -v --parallel=1 --exclude=api/config.php ./dist/ www/nhratechservices.com/public_html/
-          bye
-          EOF
+          echo "Deploying to SiteGround via SSH/rsync..."
+          rsync -avz \
+            --exclude 'api/config.php' \
+            -e "ssh -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes" \
+            dist/ \
+            "${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:/home/customer/www/nhratechservices.com/public_html/"
           echo "Deployment complete"
 
       - name: Post-deploy verification

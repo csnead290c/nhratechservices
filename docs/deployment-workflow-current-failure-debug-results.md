@@ -35,58 +35,66 @@ SSH inspection revealed:
 
 ---
 
-## Part 2: Workflow Changes Made
+## Part 2: Workflow Changes — FTP Abandoned, SSH/rsync Implemented
 
-### Preflight Validation (UNCHANGED)
-Validates existing secrets:
-- Checks `FTP_SERVER` is present
-- Checks `FTP_USERNAME` is present
-- Checks `FTP_PASSWORD` is present
-- No values printed in logs
+### FTP Abandoned
+**FTP deployment is permanently abandoned due to broken account configuration.**
 
-### FTP Diagnostic Step (NEW)
-Before attempting deployment, the workflow now runs a non-destructive diagnostic to determine:
-1. **Working protocol**: Explicit FTPS, Plain FTP, or Implicit FTPS
-2. **FTP-visible path**: The correct path from FTP's perspective
-
-Diagnostic tests three connection modes:
-```bash
-# A: Explicit FTPS (FTP over TLS) on port 21
-lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER"
-set ftp:ssl-allow yes
-set ftp:ssl-force false
-set ftp:ssl-protect-data true
-
-# B: Plain FTP on port 21
-lftp -u "$FTP_USER","$FTP_PASS" -p 21 "ftp://$FTP_SERVER"
-set ftp:ssl-allow false
-
-# C: Implicit FTPS on port 990
-lftp -u "$FTP_USER","$FTP_PASS" -p 990 "ftps://$FTP_SERVER"
-set ftp:ssl-force true
+The FTP account home directory points to a deleted path (`/home/customer/www/public_html/`), causing all FTP login attempts to fail with:
+```
+421 Home directory not available - aborting
 ```
 
-Each diagnostic attempt:
-- Uses `continue-on-error: true` (won't fail the workflow)
-- Runs `pwd` and `ls` to determine the FTP-visible path
-- Does NOT upload or delete any files
-- Short timeout (10s) to fail fast
+FTP secrets (`FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD`) are no longer used for deployment.
 
-### Deployment Step (UPDATED)
-Based on diagnostic results, deployment uses:
-- **Protocol**: Explicit FTPS (port 21, ssl-allow yes, ssl-force false)
-- **Path**: `www/nhratechservices.com/public_html/` (to be confirmed by diagnostic)
-- **Passive mode**: Enabled
-- **Parallelism**: Reduced to `--parallel=1` for stability
-- **Config preservation**: `--exclude=api/config.php`
-- **No delete**: Additive deployment only
+### New SSH/rsync Deployment
+Workflow now uses SSH key authentication with rsync:
+
+#### Preflight Validation (SSH Secrets)
+Validates new SSH deployment secrets:
+- Checks `SITEGROUND_SSH_HOST` is present
+- Checks `SITEGROUND_SSH_USER` is present
+- Checks `SITEGROUND_SSH_PORT` is present
+- Checks `SITEGROUND_SSH_PRIVATE_KEY` is present
+- Reports optional `SITEGROUND_SSH_PASSPHRASE` status
+- No values printed in logs
+
+#### SSH Key Setup
+```bash
+mkdir -p ~/.ssh
+chmod 700 ~/.ssh
+printf '%s\n' "${{ secrets.SITEGROUND_SSH_PRIVATE_KEY }}" > ~/.ssh/siteground_deploy_key
+chmod 600 ~/.ssh/siteground_deploy_key
+ssh-keyscan -p "${{ secrets.SITEGROUND_SSH_PORT }}" "${{ secrets.SITEGROUND_SSH_HOST }}" >> ~/.ssh/known_hosts
+```
+
+#### Deploy via SSH/rsync
+```bash
+rsync -avz \
+  --exclude 'api/config.php' \
+  -e "ssh -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes" \
+  dist/ \
+  "${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:/home/customer/www/nhratechservices.com/public_html/"
+```
 
 ### Safety Confirmations
-- ✅ Diagnostic step is non-destructive (no uploads)
+- ✅ SSH key deployed safely (600 permissions)
 - ✅ `--exclude=api/config.php` preserves server-side config
 - ✅ No `--delete` flag (additive deployment only)
+- ✅ Correct absolute path: `/home/customer/www/nhratechservices.com/public_html/`
 - ✅ Secrets not printed in logs
-- ✅ Uses existing `FTP_*` secrets (no new secrets required)
+- ✅ Uses working SSH method (proven by manual hotfix)
+
+### Required Secrets (NEW)
+See `docs/github-actions-ssh-deploy-setup.md` for setup instructions.
+
+| Secret | Required | Example |
+|--------|----------|---------|
+| `SITEGROUND_SSH_HOST` | ✅ Yes | `ssh.nhratechservices.com` |
+| `SITEGROUND_SSH_USER` | ✅ Yes | `u3542-cpixgw37zfgv` |
+| `SITEGROUND_SSH_PORT` | ✅ Yes | `18765` |
+| `SITEGROUND_SSH_PRIVATE_KEY` | ✅ Yes | [SSH private key PEM] |
+| `SITEGROUND_SSH_PASSPHRASE` | ⚠️ Optional | [Passphrase if encrypted] |
 
 ---
 
@@ -156,11 +164,12 @@ Tests  426 passed (426)
 | Component | Status |
 |-----------|--------|
 | FTP account home directory | ❌ **INVALID** - Points to deleted path |
-| FTP login working | ❌ **NO** - "421 Home directory not available" |
+| FTP deployment | ❌ **ABANDONED** - Permanently broken |
+| SSH/rsync workflow | ✅ **IMPLEMENTED** - Uses SSH key auth |
 | SSH hotfix deployed | ✅ **YES** - Production now fresh |
 | API 500 resolved | ✅ **YES** - getDB() fix deployed |
 | Production asset hash | ✅ `index-BupLlgB4-1778511384982.js` |
-| GitHub Actions deploy | ❌ **BROKEN** - FTP account needs fixing |
+| GitHub Actions deploy | ⏳ **READY** - Needs SSH secrets configured |
 
 ---
 
@@ -168,7 +177,7 @@ Tests  426 passed (426)
 
 | Hash | Message |
 |------|---------|
-| `f2aa80d` | fix(ci): add FTP diagnostic step to determine protocol and path |
+| [PENDING] | fix(ci): convert deployment from FTP to SSH/rsync |
 
 ---
 
@@ -177,38 +186,34 @@ Tests  426 passed (426)
 | Question | Answer |
 |----------|--------|
 | FTP account home confirmed invalid? | ✅ **YES** - Points to deleted `/home/customer/www/public_html/` |
-| FTP login reaches pwd/ls? | ❌ **NO** - "421 Home directory not available" |
-| Working protocol? | ❌ **NONE** - All FTP modes fail |
-| FTP-visible document root? | ❌ **UNKNOWN** - FTP cannot login |
+| FTP login working? | ❌ **NO** - "421 Home directory not available" |
+| FTP abandoned? | ✅ **YES** - Permanently removed from workflow |
+| SSH/rsync implemented? | ✅ **YES** - Workflow updated |
 | Production hotfixed by SSH? | ✅ **YES** - Manual rsync deployed successfully |
 | Production asset hash? | ✅ `index-BupLlgB4-1778511384982.js` (May 11, 2026) |
 | API 500 resolved? | ✅ **YES** - Returns 401 (requires auth) |
-| GitHub Actions deploy green? | ❌ **NO** - FTP account broken |
-| Cleared for migration/rules work? | ⚠️ **PARTIAL** - Production healthy, but CI deploy broken |
+| GitHub Actions deploy green? | ⏳ **PENDING** - Needs SSH secrets configured |
+| Cleared for migration/rules work? | ⚠️ **PARTIAL** - Production healthy, CI deploy ready but needs secrets |
 
 ---
 
-## Recovery Options (Next Steps)
+## Next Steps
 
-### Option A: Fix FTP Account Home (Recommended)
-Recreate the missing directory `/home/customer/www/public_html/` as a symlink to the correct document root:
-```bash
-mkdir -p /home/customer/www/public_html/
-# OR create symlink:
-ln -s /home/customer/www/nhratechservices.com/public_html/ /home/customer/www/public_html/
-```
-
-### Option B: Configure New FTP Account
-Create a dedicated SiteGround FTP account rooted directly at:
-`/home/customer/www/nhratechservices.com/public_html/`
-
-### Option C: Convert to SSH-based CI Deploy
-Update GitHub Actions to use SSH key auth (requires new secrets):
-- `SITEGROUND_HOST`
-- `SITEGROUND_USER`
-- `SITEGROUND_PORT`
-- `SITEGROUND_SSH_PRIVATE_KEY`
+### Required Before GitHub Actions Deploy Works
+1. **Generate SSH deploy key** (see `docs/github-actions-ssh-deploy-setup.md`)
+2. **Add public key to SiteGround** authorized_keys
+3. **Configure GitHub secrets:**
+   - `SITEGROUND_SSH_HOST`: `ssh.nhratechservices.com`
+   - `SITEGROUND_SSH_USER`: `u3542-cpixgw37zfgv`
+   - `SITEGROUND_SSH_PORT`: `18765`
+   - `SITEGROUND_SSH_PRIVATE_KEY`: [Deploy key private key]
+   - `SITEGROUND_SSH_PASSPHRASE`: [Optional - if key encrypted]
+4. **Trigger workflow run** - Should deploy successfully via SSH/rsync
+5. **Verify post-deploy checks pass**
 
 ---
 
-**Immediate Status:** Production is healthy via SSH hotfix. GitHub Actions FTP deploy remains broken until FTP account is fixed or workflow converted to SSH.
+**Immediate Status:**
+- ✅ Production is healthy (fresh deploy, API working)
+- ✅ SSH/rsync workflow implemented and ready
+- ⏳ GitHub Actions deploy pending SSH secret configuration
