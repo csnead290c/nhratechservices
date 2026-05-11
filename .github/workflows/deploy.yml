@@ -93,17 +93,44 @@ jobs:
           echo "Verifying dist contents:"
           ls -la dist/ | head -10
 
-      - name: Deploy via SFTP using lftp
+      - name: Preflight validation
+        run: |
+          echo "=== Preflight Validation ==="
+          MISSING=0
+          if [ -z "${{ secrets.SITEGROUND_HOST }}" ]; then echo "✗ Missing: SITEGROUND_HOST"; MISSING=1; else echo "✓ SITEGROUND_HOST present"; fi
+          if [ -z "${{ secrets.SITEGROUND_USER }}" ]; then echo "✗ Missing: SITEGROUND_USER"; MISSING=1; else echo "✓ SITEGROUND_USER present"; fi
+          if [ -z "${{ secrets.SITEGROUND_PORT }}" ]; then echo "✗ Missing: SITEGROUND_PORT"; MISSING=1; else echo "✓ SITEGROUND_PORT present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_PRIVATE_KEY }}" ]; then echo "✗ Missing: SITEGROUND_SSH_PRIVATE_KEY"; MISSING=1; else echo "✓ SITEGROUND_SSH_PRIVATE_KEY present"; fi
+          if [ -z "${{ secrets.SITEGROUND_SSH_PASSPHRASE }}" ]; then echo "⚠ Optional: SITEGROUND_SSH_PASSPHRASE not set (unencrypted key)"; else echo "✓ SITEGROUND_SSH_PASSPHRASE present"; fi
+          if [ $MISSING -eq 1 ]; then
+            echo "✗ FAIL: Required secrets missing. Cannot deploy."
+            exit 1
+          fi
+          echo "✓ All required secrets present"
+
+      - name: Setup SSH key
+        run: |
+          echo "Setting up SSH key..."
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.SITEGROUND_SSH_PRIVATE_KEY }}" > ~/.ssh/siteground_deploy_key
+          chmod 600 ~/.ssh/siteground_deploy_key
+          echo "SSH key written to ~/.ssh/siteground_deploy_key"
+          ssh-keyscan -p "${{ secrets.SITEGROUND_PORT }}" "${{ secrets.SITEGROUND_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "Host added to known_hosts"
+
+      - name: Deploy via SFTP using lftp with SSH key
         run: |
           echo "Installing lftp..."
           sudo apt-get update && sudo apt-get install -y lftp
-          echo "Deploying to SiteGround via SFTP..."
-          lftp -u "${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }}" -p 18765 sftp://${{ secrets.FTP_SERVER }} << EOF
-          set ssl:verify-certificate no
+          echo "Deploying to SiteGround via SFTP with SSH key..."
+          lftp << EOF
           set sftp:auto-confirm yes
-          set net:max-retries 3
+          set net:max-retries 2
           set net:timeout 30
-          mirror -R -v --parallel=3 --exclude=config.php ./dist/ /home/customer/www/nhratechservices.com/public_html/
+          set sftp:connect-program "ssh -a -x -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_PORT }} -o StrictHostKeyChecking=accept-new"
+          open sftp://${{ secrets.SITEGROUND_USER }}@${{ secrets.SITEGROUND_HOST }}
+          mirror -R -v --parallel=3 --exclude=api/config.php ./dist/ /home/customer/www/nhratechservices.com/public_html/
           bye
           EOF
           echo "Deployment complete"
