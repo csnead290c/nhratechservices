@@ -219,6 +219,8 @@ export const CAPABILITY_KEYS = [
   // ── Rules & Governance ──
   'rules.read',                  // Browse rulebook
   'rules.admin',                 // Create/edit/publish rules
+  'committees.read',             // View committees
+  'committees.admin',            // Manage committees and memberships
 ] as const;
 
 export type Capability = typeof CAPABILITY_KEYS[number];
@@ -290,6 +292,8 @@ export const CAPABILITY_ALIASES: Record<string, Capability> = {
   // Rules & Governance
   'rules_read':               'rules.read',
   'rules_admin':              'rules.admin',
+  'committees_read':          'committees.read',
+  'committees_admin':         'committees.admin',
 };
 
 /**
@@ -416,6 +420,7 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
     'nhra.tech.read',
     'nhra.tech.admin',
     'rules.read',
+    'committees.read',
     'sim.basic',
     'charts.basic',
     'weather.manual',
@@ -431,8 +436,8 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
 
 /** Capabilities granted by role regardless of plan (owner/admin get admin tools). */
 export const ROLE_CAPABILITIES: Record<RoleId, ReadonlySet<Capability>> = {
-  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'incidents.edit.all']),
-  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'incidents.edit.all']),
+  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all']),
+  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all']),
   member: new Set<Capability>([]),
   viewer: new Set<Capability>([]),
 };

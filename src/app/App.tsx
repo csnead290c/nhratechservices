@@ -60,6 +60,8 @@ const IncidentAnalysis = lazy(() => import('../pages/IncidentAnalysis'));
 const TechMasterShell = lazy(() => import('../pages/TechMasterShell'));
 const RulesList = lazy(() => import('../pages/RulesList'));
 const RuleDetail = lazy(() => import('../pages/RuleDetail'));
+const RulesCommitteesList = lazy(() => import('../pages/RulesCommitteesList'));
+const RulesCommitteeDetail = lazy(() => import('../pages/RulesCommitteeDetail'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -469,7 +471,7 @@ function NhraHomeRedirect() {
 }
 
 // Redirect NHRA-only users away from any page they shouldn't be on.
-const NHRA_ALLOWED_PREFIXES = ['/parity', '/account', '/login', '/help', '/rules'];
+const NHRA_ALLOWED_PREFIXES = ['/parity', '/account', '/login', '/help', '/rules', '/rules/committees'];
 
 function NhraPageGuard({ children }: { children: React.ReactNode }) {
   const location = useLocation();
@@ -763,6 +765,21 @@ function App() {
               <CapabilityRoute requireCap="rules.read">
                 <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
                   <RulesList />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            {/* Rules Committees routes */}
+            <Route path="/rules/committees/:id" element={
+              <CapabilityRoute requireCap="committees.read">
+                <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
+                  <RulesCommitteeDetail />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/rules/committees" element={
+              <CapabilityRoute requireCap="committees.read">
+                <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
+                  <RulesCommitteesList />
                 </Suspense>
               </CapabilityRoute>
             } />
