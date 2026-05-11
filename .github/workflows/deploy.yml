@@ -93,14 +93,17 @@ jobs:
           echo "Verifying dist contents:"
           ls -la dist/ | head -10
 
-      - name: Deploy via SFTP
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.FTP_SERVER }}
-          username: ${{ secrets.FTP_USERNAME }}
-          password: ${{ secrets.FTP_PASSWORD }}
-          port: 18765
-          source: "./dist/*"
-          target: "/home/customer/www/nhratechservices.com/public_html/"
-          strip_components: 2
-          rm: false
+      - name: Deploy via SFTP using lftp
+        run: |
+          echo "Installing lftp..."
+          sudo apt-get update && sudo apt-get install -y lftp
+          echo "Deploying to SiteGround via SFTP..."
+          lftp -u "${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }}" -p 18765 sftp://${{ secrets.FTP_SERVER }} << EOF
+          set ssl:verify-certificate no
+          set sftp:auto-confirm yes
+          set net:max-retries 3
+          set net:timeout 30
+          mirror -R -v --parallel=3 --exclude=config.php ./dist/ /home/customer/www/nhratechservices.com/public_html/
+          bye
+          EOF
+          echo "Deployment complete"
