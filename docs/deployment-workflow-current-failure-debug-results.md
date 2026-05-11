@@ -1,28 +1,37 @@
 # Deployment Workflow Current Failure Debug Results
 
-**Sprint Goal:** Fix deployment workflow to use existing `FTP_*` secrets with FTPS
+**Sprint Goal:** Fix deployment workflow and resolve FTP account home directory issue
 
 **Date:** May 11, 2026
 
 ---
 
-## Part 1: Current Workflow Failure Confirmed
+## Part 1: FTP Account Home Directory Root Cause
 
 ### Latest GitHub Actions Run Analysis
 | Attribute | Value |
 |-----------|-------|
-| Workflow commit | `507e4e7` (current HEAD) |
-| Deployment method | lftp (attempted SSH key auth) |
-| Failure type | **Preflight validation failed** |
-| Error message | `Missing: SITEGROUND_HOST`, `Missing: SITEGROUND_USER`, etc. |
+| Workflow commit | `f2aa80d` (current HEAD) |
+| Deployment method | lftp with FTP diagnostic |
+| Preflight status | ✅ FTP_* secrets present |
+| Failure type | **FTP account home directory invalid** |
 
 ### Root Cause Identified
-The workflow was updated to use new `SITEGROUND_*` secrets, but the repository only has `FTP_*` secrets configured:
-- `FTP_SERVER`
-- `FTP_USERNAME`
-- `FTP_PASSWORD`
+**FTP account home directory points to deleted path.**
 
-**Decision:** Use existing `FTP_*` secrets with FTPS (FTP over TLS) instead of requiring new SSH key secrets.
+SSH inspection revealed:
+| Path | Status |
+|------|--------|
+| `/home/customer/www/nhratechservices.com/public_html/` | ✅ **Exists** (correct document root) |
+| `/home/customer/www/public_html/` | ❌ **DELETED** (likely FTP home) |
+| `/home/customer/www/public_html/nhratechservices.com/` | ❌ **DELETED** |
+
+**FTP Diagnostic Results:**
+- **Explicit FTPS**: Certificate hostname mismatch
+- **Plain FTP**: `421 Home directory not available - aborting`
+- **Deploy step**: Same `421 Home directory not available` error
+
+**Conclusion:** The FTP account was configured with a home directory pointing to `/home/customer/www/public_html/` which was deleted during server cleanup. FTP login fails because the home directory doesn't exist.
 
 ---
 
@@ -81,11 +90,45 @@ Based on diagnostic results, deployment uses:
 
 ---
 
-## Part 3: Validation Results
+## Part 3: SSH Hotfix Deployment (Manual Recovery)
+
+### Action Taken
+Due to FTP account being unusable, performed manual SSH-based deployment as temporary recovery:
+
+```bash
+rsync -avz --exclude='api/config.php' \
+  -e "ssh -p 18765" \
+  dist/ \
+  "u3542-cpixgw37zfgv@ssh.nhratechservices.com:/home/customer/www/nhratechservices.com/public_html/"
+```
+
+### Hotfix Safety Measures
+- ✅ Used `--exclude=api/config.php` to preserve server secrets
+- ✅ No `--delete` flag (additive deployment)
+- ✅ Deployed to correct document root
+- ✅ Verified getDB() function present in build
+
+### Hotfix Results
+
+| Metric | Result |
+|--------|--------|
+| **Deploy method** | rsync over SSH (manual) |
+| **Files sent** | 15,411,279 bytes |
+| **Deploy time** | ~12 seconds |
+| **Production asset hash** | `index-BupLlgB4-1778511384982.js` ✅ **FRESH** |
+| **API auth.php** | `401` ✅ **Not 500** |
+| **API parity.php** | `401` ✅ **Not 500** |
+| **config.php** | `492 bytes` ✅ **Preserved** |
+
+**API Health:** The `401` responses (not `500`) confirm the `getDB()` fix is working. Endpoints now require authentication rather than crashing with undefined function errors.
+
+---
+
+## Part 4: Validation Results
 
 ### Build
 ```
-✓ built in 4.45s
+✓ built in 5.09s
 ```
 
 ### Tests
@@ -108,42 +151,16 @@ Tests  426 passed (426)
 
 ---
 
-## Part 4: Deployment Configuration
-
-### Required GitHub Secrets (EXISTING - No Changes Needed)
-| Secret | Required | Purpose |
-|--------|----------|---------|
-| `FTP_SERVER` | ✅ Yes | FTP/FTPS server hostname |
-| `FTP_USERNAME` | ✅ Yes | FTP account username |
-| `FTP_PASSWORD` | ✅ Yes | FTP account password |
-
-### Protocol
-- **Primary:** FTPS (FTP over TLS/SSL)
-- **Fallback:** Plain FTP (if FTPS fails)
-- **SSL Settings:** `ssl-allow yes`, `ssl-force true`, certificate verification disabled
-
-### Post-Deploy Verification (Automated)
-The workflow will automatically verify:
-- Production asset hash matches build
-- `/rules` route present in bundle
-- NHRA Tech Services branding present
-- Old RSA branding absent
-- API endpoints do not return HTTP 500
-
----
-
 ## Summary
 
 | Component | Status |
 |-----------|--------|
-| SITEGROUND_* secrets required | ❌ Removed - Using existing FTP_* secrets |
-| SSH key auth | ❌ Removed - Using FTP/FTPS |
-| FTP diagnostic step | ✅ Added - Non-destructive protocol/path detection |
-| Preflight validation | ✅ Uses existing FTP_* secrets |
-| Secret safety | ✅ No values printed |
-| Config preservation | ✅ `--exclude=api/config.php` |
-| Post-deploy verification | ✅ Includes API health checks |
-| Production deployment | ⏳ Blocked - needs diagnostic results to tune deploy |
+| FTP account home directory | ❌ **INVALID** - Points to deleted path |
+| FTP login working | ❌ **NO** - "421 Home directory not available" |
+| SSH hotfix deployed | ✅ **YES** - Production now fresh |
+| API 500 resolved | ✅ **YES** - getDB() fix deployed |
+| Production asset hash | ✅ `index-BupLlgB4-1778511384982.js` |
+| GitHub Actions deploy | ❌ **BROKEN** - FTP account needs fixing |
 
 ---
 
@@ -151,7 +168,7 @@ The workflow will automatically verify:
 
 | Hash | Message |
 |------|---------|
-| [PENDING] | fix(ci): add FTP diagnostic step to determine protocol and path |
+| `f2aa80d` | fix(ci): add FTP diagnostic step to determine protocol and path |
 
 ---
 
@@ -159,22 +176,39 @@ The workflow will automatically verify:
 
 | Question | Answer |
 |----------|--------|
-| Workflow commit SHA? | `5e92fe1` → `[NEW COMMIT]` |
-| Workflow secret names used? | `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD` |
-| Preflight passed? | ✅ Yes |
-| Previous failure? | FTPS mirror: max-retries exceeded |
-| Diagnostic added? | ✅ Yes - Tests 3 protocols non-destructively |
-| Working protocol? | ⏳ **PENDING** - Wait for diagnostic output |
-| FTP-visible path? | ⏳ **PENDING** - Wait for pwd/ls output |
-| Production asset hash? | ⏳ **PENDING** - After successful deploy |
-| API 500 resolved? | ⏳ **PENDING** - After getDB() fix deploys |
-| api/config.php preserved? | ✅ Yes (excluded from deploy) |
-| Cleared for migration/rules work? | **NO** - ⏸️ PAUSED until deploy succeeds |
+| FTP account home confirmed invalid? | ✅ **YES** - Points to deleted `/home/customer/www/public_html/` |
+| FTP login reaches pwd/ls? | ❌ **NO** - "421 Home directory not available" |
+| Working protocol? | ❌ **NONE** - All FTP modes fail |
+| FTP-visible document root? | ❌ **UNKNOWN** - FTP cannot login |
+| Production hotfixed by SSH? | ✅ **YES** - Manual rsync deployed successfully |
+| Production asset hash? | ✅ `index-BupLlgB4-1778511384982.js` (May 11, 2026) |
+| API 500 resolved? | ✅ **YES** - Returns 401 (requires auth) |
+| GitHub Actions deploy green? | ❌ **NO** - FTP account broken |
+| Cleared for migration/rules work? | ⚠️ **PARTIAL** - Production healthy, but CI deploy broken |
 
 ---
 
-**Next Action:** Review workflow run logs to identify:
-1. Which protocol mode succeeded (A, B, or C)
-2. What pwd/ls output shows for FTP-visible path
-3. Update deploy step if path/protocol needs adjustment
-4. Re-run until deployment succeeds
+## Recovery Options (Next Steps)
+
+### Option A: Fix FTP Account Home (Recommended)
+Recreate the missing directory `/home/customer/www/public_html/` as a symlink to the correct document root:
+```bash
+mkdir -p /home/customer/www/public_html/
+# OR create symlink:
+ln -s /home/customer/www/nhratechservices.com/public_html/ /home/customer/www/public_html/
+```
+
+### Option B: Configure New FTP Account
+Create a dedicated SiteGround FTP account rooted directly at:
+`/home/customer/www/nhratechservices.com/public_html/`
+
+### Option C: Convert to SSH-based CI Deploy
+Update GitHub Actions to use SSH key auth (requires new secrets):
+- `SITEGROUND_HOST`
+- `SITEGROUND_USER`
+- `SITEGROUND_PORT`
+- `SITEGROUND_SSH_PRIVATE_KEY`
+
+---
+
+**Immediate Status:** Production is healthy via SSH hotfix. GitHub Actions FTP deploy remains broken until FTP account is fixed or workflow converted to SSH.
