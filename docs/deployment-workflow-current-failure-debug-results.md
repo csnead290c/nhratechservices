@@ -28,41 +28,54 @@ The workflow was updated to use new `SITEGROUND_*` secrets, but the repository o
 
 ## Part 2: Workflow Changes Made
 
-### Preflight Validation (UPDATED)
-Now validates existing secrets without requiring new ones:
+### Preflight Validation (UNCHANGED)
+Validates existing secrets:
 - Checks `FTP_SERVER` is present
 - Checks `FTP_USERNAME` is present
 - Checks `FTP_PASSWORD` is present
 - No values printed in logs
 
-### FTPS Deployment with lftp (UPDATED)
+### FTP Diagnostic Step (NEW)
+Before attempting deployment, the workflow now runs a non-destructive diagnostic to determine:
+1. **Working protocol**: Explicit FTPS, Plain FTP, or Implicit FTPS
+2. **FTP-visible path**: The correct path from FTP's perspective
+
+Diagnostic tests three connection modes:
 ```bash
-lftp -u "${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }}" ftps://${{ secrets.FTP_SERVER }} << EOF
+# A: Explicit FTPS (FTP over TLS) on port 21
+lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER"
 set ftp:ssl-allow yes
+set ftp:ssl-force false
+set ftp:ssl-protect-data true
+
+# B: Plain FTP on port 21
+lftp -u "$FTP_USER","$FTP_PASS" -p 21 "ftp://$FTP_SERVER"
+set ftp:ssl-allow false
+
+# C: Implicit FTPS on port 990
+lftp -u "$FTP_USER","$FTP_PASS" -p 990 "ftps://$FTP_SERVER"
 set ftp:ssl-force true
-set ssl:verify-certificate no
-set net:max-retries 2
-set net:timeout 30
-mirror -R -v --parallel=3 --exclude=api/config.php ./dist/ www/nhratechservices.com/public_html/
-bye
-EOF
 ```
 
-### FTP-Visible Path
-The FTP user is chrooted. The correct FTP-visible path is:
-```
-www/nhratechservices.com/public_html/
-```
+Each diagnostic attempt:
+- Uses `continue-on-error: true` (won't fail the workflow)
+- Runs `pwd` and `ls` to determine the FTP-visible path
+- Does NOT upload or delete any files
+- Short timeout (10s) to fail fast
 
-This maps to the absolute path:
-```
-/home/customer/www/nhratechservices.com/public_html/
-```
+### Deployment Step (UPDATED)
+Based on diagnostic results, deployment uses:
+- **Protocol**: Explicit FTPS (port 21, ssl-allow yes, ssl-force false)
+- **Path**: `www/nhratechservices.com/public_html/` (to be confirmed by diagnostic)
+- **Passive mode**: Enabled
+- **Parallelism**: Reduced to `--parallel=1` for stability
+- **Config preservation**: `--exclude=api/config.php`
+- **No delete**: Additive deployment only
 
 ### Safety Confirmations
+- ✅ Diagnostic step is non-destructive (no uploads)
 - ✅ `--exclude=api/config.php` preserves server-side config
 - ✅ No `--delete` flag (additive deployment only)
-- ✅ Correct FTP-visible path: `www/nhratechservices.com/public_html/`
 - ✅ Secrets not printed in logs
 - ✅ Uses existing `FTP_*` secrets (no new secrets required)
 
@@ -124,13 +137,13 @@ The workflow will automatically verify:
 | Component | Status |
 |-----------|--------|
 | SITEGROUND_* secrets required | ❌ Removed - Using existing FTP_* secrets |
-| SSH key auth | ❌ Removed - Using FTPS |
-| FTPS with lftp | ✅ Implemented |
+| SSH key auth | ❌ Removed - Using FTP/FTPS |
+| FTP diagnostic step | ✅ Added - Non-destructive protocol/path detection |
 | Preflight validation | ✅ Uses existing FTP_* secrets |
 | Secret safety | ✅ No values printed |
 | Config preservation | ✅ `--exclude=api/config.php` |
 | Post-deploy verification | ✅ Includes API health checks |
-| Production deployment | ⏳ Ready - using existing secrets |
+| Production deployment | ⏳ Blocked - needs diagnostic results to tune deploy |
 
 ---
 
@@ -138,7 +151,7 @@ The workflow will automatically verify:
 
 | Hash | Message |
 |------|---------|
-| [PENDING] | fix(ci): use existing FTP_* secrets with FTPS deployment |
+| [PENDING] | fix(ci): add FTP diagnostic step to determine protocol and path |
 
 ---
 
@@ -146,15 +159,22 @@ The workflow will automatically verify:
 
 | Question | Answer |
 |----------|--------|
+| Workflow commit SHA? | `5e92fe1` → `[NEW COMMIT]` |
 | Workflow secret names used? | `FTP_SERVER`, `FTP_USERNAME`, `FTP_PASSWORD` |
-| Deploy protocol? | FTPS (FTP over TLS) |
-| New secrets required? | **NO** - Uses existing secrets |
-| GitHub Actions deploy green? | ⏳ Ready to test with existing secrets |
-| Production fresh? | ❌ No - still stale (May 9) |
-| API 500 resolved? | ⏳ Pending deployment of getDB() fix |
+| Preflight passed? | ✅ Yes |
+| Previous failure? | FTPS mirror: max-retries exceeded |
+| Diagnostic added? | ✅ Yes - Tests 3 protocols non-destructively |
+| Working protocol? | ⏳ **PENDING** - Wait for diagnostic output |
+| FTP-visible path? | ⏳ **PENDING** - Wait for pwd/ls output |
+| Production asset hash? | ⏳ **PENDING** - After successful deploy |
+| API 500 resolved? | ⏳ **PENDING** - After getDB() fix deploys |
 | api/config.php preserved? | ✅ Yes (excluded from deploy) |
-| Cleared for migration/rules work? | **NO** - ⏸️ PAUSED until deployment succeeds and API 500 is resolved |
+| Cleared for migration/rules work? | **NO** - ⏸️ PAUSED until deploy succeeds |
 
 ---
 
-**Next Action:** Monitor workflow run using existing `FTP_*` secrets. If FTPS fails, workflow may need adjustment for plain FTP or different SSL settings.
+**Next Action:** Review workflow run logs to identify:
+1. Which protocol mode succeeded (A, B, or C)
+2. What pwd/ls output shows for FTP-visible path
+3. Update deploy step if path/protocol needs adjustment
+4. Re-run until deployment succeeds

@@ -106,18 +106,76 @@ jobs:
           fi
           echo "✓ All required FTP secrets present"
 
-      - name: Deploy via FTPS using lftp
+      - name: FTP Diagnostic (determine protocol and path)
         run: |
           echo "Installing lftp..."
           sudo apt-get update && sudo apt-get install -y lftp
-          echo "Deploying to SiteGround via FTPS..."
-          lftp -u "${{ secrets.FTP_USERNAME }},${{ secrets.FTP_PASSWORD }}" ftps://${{ secrets.FTP_SERVER }} << EOF
+          
+          echo ""
+          echo "=== FTP Diagnostic: Testing connection modes ==="
+          
+          FTP_SERVER="${{ secrets.FTP_SERVER }}"
+          FTP_USER="${{ secrets.FTP_USERNAME }}"
+          FTP_PASS="${{ secrets.FTP_PASSWORD }}"
+          
+          echo "Attempting A: Explicit FTPS (FTP over TLS)..."
+          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER" << 'DIAG1' 2>&1 || echo "Explicit FTPS failed"
           set ftp:ssl-allow yes
+          set ftp:ssl-force false
+          set ftp:ssl-protect-data true
+          set ftp:passive-mode yes
+          set net:max-retries 1
+          set net:timeout 10
+          pwd
+          ls
+          bye
+          DIAG1
+          
+          echo ""
+          echo "Attempting B: Plain FTP..."
+          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "ftp://$FTP_SERVER" << 'DIAG2' 2>&1 || echo "Plain FTP failed"
+          set ftp:ssl-allow false
+          set ftp:passive-mode yes
+          set net:max-retries 1
+          set net:timeout 10
+          pwd
+          ls
+          bye
+          DIAG2
+          
+          echo ""
+          echo "Attempting C: Implicit FTPS..."
+          lftp -u "$FTP_USER","$FTP_PASS" -p 990 "ftps://$FTP_SERVER" << 'DIAG3' 2>&1 || echo "Implicit FTPS failed"
           set ftp:ssl-force true
+          set ftp:passive-mode yes
+          set net:max-retries 1
+          set net:timeout 10
+          pwd
+          ls
+          bye
+          DIAG3
+          
+          echo ""
+          echo "=== FTP Diagnostic Complete ==="
+          echo "Review logs above to determine working protocol and path"
+        continue-on-error: true
+
+      - name: Deploy via FTP/FTPS using lftp
+        run: |
+          echo "Deploying to SiteGround..."
+          FTP_SERVER="${{ secrets.FTP_SERVER }}"
+          FTP_USER="${{ secrets.FTP_USERNAME }}"
+          FTP_PASS="${{ secrets.FTP_PASSWORD }}"
+          
+          lftp -u "$FTP_USER","$FTP_PASS" -p 21 "$FTP_SERVER" << EOF
+          set ftp:ssl-allow yes
+          set ftp:ssl-force false
+          set ftp:ssl-protect-data true
+          set ftp:passive-mode yes
           set ssl:verify-certificate no
           set net:max-retries 2
           set net:timeout 30
-          mirror -R -v --parallel=3 --exclude=api/config.php ./dist/ www/nhratechservices.com/public_html/
+          mirror -R -v --parallel=1 --exclude=api/config.php ./dist/ www/nhratechservices.com/public_html/
           bye
           EOF
           echo "Deployment complete"
