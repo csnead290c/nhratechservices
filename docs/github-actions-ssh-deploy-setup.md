@@ -86,11 +86,58 @@ chmod 600 ~/.ssh/authorized_keys
 
 Repeat Step 3 for each required secret:
 
-| Secret Name | Example Value |
-|-------------|---------------|
+| Secret Name | Example Value | Description |
+|-------------|---------------|-------------|
+| `SITEGROUND_SSH_HOST` | `ssh.nhratechservices.com` | SSH server hostname |
+| `SITEGROUND_SSH_USER` | `u3542-cpixgw37zfgv` | SiteGround SSH username |
+| `SITEGROUND_SSH_PORT` | `18765` | SSH port (SiteGround uses non-standard port) |
+
+## Quick Setup Guide (Current Project)
+
+If the deploy key has already been generated and added to SiteGround, complete these steps:
+
+### Step 1: Copy the private key
+```bash
+cat ~/.ssh/siteground_nhrats_deploy
+# OR if in project tmp directory:
+cat .tmp/siteground_nhrats_deploy
+```
+
+Copy the entire output including:
+```
+-----BEGIN OPENSSH PRIVATE KEY-----
+...
+-----END OPENSSH PRIVATE KEY-----
+```
+
+### Step 2: Open GitHub repository secrets page
+1. Go to: `https://github.com/csnead290c/nhratechservices/settings/secrets/actions`
+2. Click **"New repository secret"** button
+
+### Step 3: Add SITEGROUND_SSH_PRIVATE_KEY
+- **Name:** `SITEGROUND_SSH_PRIVATE_KEY`
+- **Value:** Paste the entire private key content from Step 1
+- Click **"Add secret"**
+
+### Step 4: Add remaining secrets
+Repeat for each:
+
+| Secret Name | Value to enter |
+|-------------|----------------|
 | `SITEGROUND_SSH_HOST` | `ssh.nhratechservices.com` |
 | `SITEGROUND_SSH_USER` | `u3542-cpixgw37zfgv` |
 | `SITEGROUND_SSH_PORT` | `18765` |
+
+### Step 5: Verify secrets are set
+Return to: `https://github.com/csnead290c/nhratechservices/settings/secrets/actions`
+
+You should see:
+- ✅ `SITEGROUND_SSH_HOST`
+- ✅ `SITEGROUND_SSH_PRIVATE_KEY`
+- ✅ `SITEGROUND_SSH_PORT`
+- ✅ `SITEGROUND_SSH_USER`
+
+(The key is now installed on SiteGround - public key added to `~/.ssh/authorized_keys`)
 
 ## Step 5: Test Deployment
 

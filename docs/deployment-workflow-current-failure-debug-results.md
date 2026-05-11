@@ -197,23 +197,66 @@ Tests  426 passed (426)
 
 ---
 
+## Part 5: SSH Setup Completion Status
+
+### Deploy Key Generated
+- **Type:** ED25519
+- **Comment:** `github-actions-nhrats-deploy`
+- **Fingerprint:** `SHA256:qpqJn48xIcuGw0KpIbFfVqS6i5w8Lt8kmO3VP7whAPo`
+- **Location:** Generated in `.tmp/` and removed after setup
+- **Private key:** Saved to local machine for GitHub secret import
+
+### Public Key Installed on SiteGround
+- **Location:** `~/.ssh/authorized_keys`
+- **Permissions:** 
+  - `~/.ssh` directory: 700
+  - `~/.ssh/authorized_keys`: 600
+- **Key count:** 1 key installed
+- **Test:** SSH connection working with new key
+
+### GitHub Secrets Status
+| Secret | Status |
+|--------|--------|
+| `SITEGROUND_SSH_HOST` | ⏳ **PENDING** - Add via GitHub UI |
+| `SITEGROUND_SSH_USER` | ⏳ **PENDING** - Add via GitHub UI |
+| `SITEGROUND_SSH_PORT` | ⏳ **PENDING** - Add via GitHub UI |
+| `SITEGROUND_SSH_PRIVATE_KEY` | ⏳ **PENDING** - Add via GitHub UI |
+| `SITEGROUND_SSH_PASSPHRASE` | ⏳ **OPTIONAL** - Not needed (unencrypted key) |
+
+### How to Complete Setup
+GitHub CLI (`gh`) requires browser authentication which cannot be automated.
+
+**Manual steps required:**
+1. Go to: `https://github.com/csnead290c/nhratechservices/settings/secrets/actions`
+2. Add these 4 secrets:
+   | Secret | Value |
+   |--------|-------|
+   | `SITEGROUND_SSH_HOST` | `ssh.nhratechservices.com` |
+   | `SITEGROUND_SSH_USER` | `u3542-cpixgw37zfgv` |
+   | `SITEGROUND_SSH_PORT` | `18765` |
+   | `SITEGROUND_SSH_PRIVATE_KEY` | Copy from `cat ~/.ssh/siteground_nhrats_deploy` |
+
+See `docs/github-actions-ssh-deploy-setup.md` for detailed screenshots and steps.
+
+---
+
 ## Next Steps
 
 ### Required Before GitHub Actions Deploy Works
-1. **Generate SSH deploy key** (see `docs/github-actions-ssh-deploy-setup.md`)
-2. **Add public key to SiteGround** authorized_keys
-3. **Configure GitHub secrets:**
+1. ✅ **Generate SSH deploy key** - COMPLETED
+2. ✅ **Add public key to SiteGround** - COMPLETED (added to `~/.ssh/authorized_keys`)
+3. ⏳ **Configure GitHub secrets** - PENDING (requires manual UI entry)
    - `SITEGROUND_SSH_HOST`: `ssh.nhratechservices.com`
    - `SITEGROUND_SSH_USER`: `u3542-cpixgw37zfgv`
    - `SITEGROUND_SSH_PORT`: `18765`
-   - `SITEGROUND_SSH_PRIVATE_KEY`: [Deploy key private key]
-   - `SITEGROUND_SSH_PASSPHRASE`: [Optional - if key encrypted]
-4. **Trigger workflow run** - Should deploy successfully via SSH/rsync
-5. **Verify post-deploy checks pass**
+   - `SITEGROUND_SSH_PRIVATE_KEY`: Copy from local key file
+4. ⏳ **Trigger workflow run** - PENDING (after secrets configured)
+5. ⏳ **Verify post-deploy checks pass** - PENDING
 
 ---
 
 **Immediate Status:**
 - ✅ Production is healthy (fresh deploy, API working)
 - ✅ SSH/rsync workflow implemented and ready
-- ⏳ GitHub Actions deploy pending SSH secret configuration
+- ✅ Deploy key generated and installed on SiteGround
+- ⏳ GitHub Actions deploy **BLOCKED** - needs 4 secrets added via GitHub UI
