@@ -71,6 +71,29 @@ export default function RulesList() {
         NHRA rulebook — browse current and historical rules.
       </p>
 
+      {/* Committees Link */}
+      <div style={{ marginBottom: '1.5rem' }}>
+        <Link
+          to="/rules/committees"
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '0.5rem',
+            padding: '0.75rem 1rem',
+            backgroundColor: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            borderRadius: 'var(--radius-md)',
+            textDecoration: 'none',
+            color: 'var(--color-text)',
+            fontWeight: 500,
+          }}
+        >
+          <span>👥</span>
+          <span>Rules Committees</span>
+          <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: 'var(--color-muted)' }}>→</span>
+        </Link>
+      </div>
+
       {/* Filters */}
       <div style={{
         display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1.5rem',
