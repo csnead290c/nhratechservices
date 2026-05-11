@@ -166,10 +166,12 @@ Tests  426 passed (426)
 | FTP account home directory | ❌ **INVALID** - Points to deleted path |
 | FTP deployment | ❌ **ABANDONED** - Permanently broken |
 | SSH/rsync workflow | ✅ **IMPLEMENTED** - Uses SSH key auth |
-| SSH hotfix deployed | ✅ **YES** - Production now fresh |
-| API 500 resolved | ✅ **YES** - getDB() fix deployed |
-| Production asset hash | ✅ `index-BupLlgB4-1778511384982.js` |
-| GitHub Actions deploy | ⏳ **READY** - Needs SSH secrets configured |
+| Deploy key on SiteGround | ✅ **CONFIGURED** - 2 keys in authorized_keys |
+| GitHub Actions secrets | ✅ **CONFIGURED** - All 4 secrets set |
+| GitHub Actions deploy | ✅ **GREEN** - Workflow runs successfully |
+| Production asset hash | ✅ `index-BjqRiMWA-1778515159630.js` (fresh) |
+| API 500 resolved | ✅ **YES** - Returns 401 (requires auth) |
+| api/config.php preserved | ✅ **YES** - 492 bytes unchanged |
 
 ---
 
@@ -189,11 +191,13 @@ Tests  426 passed (426)
 | FTP login working? | ❌ **NO** - "421 Home directory not available" |
 | FTP abandoned? | ✅ **YES** - Permanently removed from workflow |
 | SSH/rsync implemented? | ✅ **YES** - Workflow updated |
-| Production hotfixed by SSH? | ✅ **YES** - Manual rsync deployed successfully |
-| Production asset hash? | ✅ `index-BupLlgB4-1778511384982.js` (May 11, 2026) |
+| Deploy key added to SiteGround? | ✅ **YES** - Public key added to `~/.ssh/authorized_keys` |
+| GitHub secrets configured? | ✅ **YES** - SITEGROUND_SSH_PRIVATE_KEY added |
+| GitHub Actions deploy green? | ✅ **YES** - Workflow completed successfully |
+| Production asset hash? | ✅ `index-BjqRiMWA-1778515159630.js` (May 11, 2026) |
 | API 500 resolved? | ✅ **YES** - Returns 401 (requires auth) |
-| GitHub Actions deploy green? | ⏳ **PENDING** - Needs SSH secrets configured |
-| Cleared for migration/rules work? | ⚠️ **PARTIAL** - Production healthy, CI deploy ready but needs secrets |
+| api/config.php preserved? | ✅ **YES** - 492 bytes, unchanged |
+| Cleared for migration/rules work? | ✅ **YES** - CI deploy green, production healthy |
 
 ---
 
@@ -217,46 +221,30 @@ Tests  426 passed (426)
 ### GitHub Secrets Status
 | Secret | Status |
 |--------|--------|
-| `SITEGROUND_SSH_HOST` | ⏳ **PENDING** - Add via GitHub UI |
-| `SITEGROUND_SSH_USER` | ⏳ **PENDING** - Add via GitHub UI |
-| `SITEGROUND_SSH_PORT` | ⏳ **PENDING** - Add via GitHub UI |
-| `SITEGROUND_SSH_PRIVATE_KEY` | ⏳ **PENDING** - Add via GitHub UI |
-| `SITEGROUND_SSH_PASSPHRASE` | ⏳ **OPTIONAL** - Not needed (unencrypted key) |
+| `SITEGROUND_SSH_HOST` | ✅ **CONFIGURED** |
+| `SITEGROUND_SSH_USER` | ✅ **CONFIGURED** |
+| `SITEGROUND_SSH_PORT` | ✅ **CONFIGURED** |
+| `SITEGROUND_SSH_PRIVATE_KEY` | ✅ **CONFIGURED** |
+| `SITEGROUND_SSH_PASSPHRASE` | ⚠️ **OPTIONAL** - Not needed (unencrypted key) |
 
-### How to Complete Setup
-GitHub CLI (`gh`) requires browser authentication which cannot be automated.
-
-**Manual steps required:**
-1. Go to: `https://github.com/csnead290c/nhratechservices/settings/secrets/actions`
-2. Add these 4 secrets:
-   | Secret | Value |
-   |--------|-------|
-   | `SITEGROUND_SSH_HOST` | `ssh.nhratechservices.com` |
-   | `SITEGROUND_SSH_USER` | `u3542-cpixgw37zfgv` |
-   | `SITEGROUND_SSH_PORT` | `18765` |
-   | `SITEGROUND_SSH_PRIVATE_KEY` | Copy from `cat ~/.ssh/siteground_nhrats_deploy` |
-
-See `docs/github-actions-ssh-deploy-setup.md` for detailed screenshots and steps.
+### Setup Complete
+All required SSH secrets have been configured in GitHub. The workflow now deploys successfully via SSH/rsync.
 
 ---
 
 ## Next Steps
 
-### Required Before GitHub Actions Deploy Works
+### SSH Deployment Setup ✅ COMPLETE
 1. ✅ **Generate SSH deploy key** - COMPLETED
-2. ✅ **Add public key to SiteGround** - COMPLETED (added to `~/.ssh/authorized_keys`)
-3. ⏳ **Configure GitHub secrets** - PENDING (requires manual UI entry)
-   - `SITEGROUND_SSH_HOST`: `ssh.nhratechservices.com`
-   - `SITEGROUND_SSH_USER`: `u3542-cpixgw37zfgv`
-   - `SITEGROUND_SSH_PORT`: `18765`
-   - `SITEGROUND_SSH_PRIVATE_KEY`: Copy from local key file
-4. ⏳ **Trigger workflow run** - PENDING (after secrets configured)
-5. ⏳ **Verify post-deploy checks pass** - PENDING
+2. ✅ **Add public key to SiteGround** - COMPLETED (2 keys in `~/.ssh/authorized_keys`)
+3. ✅ **Configure GitHub secrets** - COMPLETED (all 4 secrets added)
+4. ✅ **Trigger workflow run** - COMPLETED (commit `eb9183d` triggered deploy)
+5. ✅ **Verify post-deploy checks pass** - COMPLETED
 
 ---
 
 **Immediate Status:**
-- ✅ Production is healthy (fresh deploy, API working)
-- ✅ SSH/rsync workflow implemented and ready
-- ✅ Deploy key generated and installed on SiteGround
-- ⏳ GitHub Actions deploy **BLOCKED** - needs 4 secrets added via GitHub UI
+- ✅ Production is healthy (fresh deploy: `index-BjqRiMWA-1778515159630.js`)
+- ✅ SSH/rsync workflow working
+- ✅ Deploy key installed on SiteGround
+- ✅ GitHub Actions deploy **GREEN** - All systems operational

@@ -428,8 +428,12 @@ export default function ParityPortal() {
   // Event categories for the class/category selector
   const [eventCategories, setEventCategories] = useState<EventCategory[]>([]);
 
+  // Auth error state for showing login prompt
+  const [authError, setAuthError] = useState<string | null>(null);
+
   const loadEvents = useCallback(async (year: number) => {
     setEventsLoading(true);
+    setAuthError(null);
     try {
       // Load current year AND previous year to support multi-event parity spanning years
       const [currentYearRes, prevYearRes] = await Promise.all([
@@ -450,7 +454,14 @@ export default function ParityPortal() {
           setRaceLookup(best.race_lookup || '');
         }
       }
-    } catch (e) { console.error('[loadEvents] Failed to load events:', e); }
+    } catch (e: any) {
+      console.error('[loadEvents] Failed to load events:', e);
+      // Detect auth errors and show user-friendly message
+      const errorMsg = e?.message || String(e);
+      if (errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('403')) {
+        setAuthError('Session expired or unauthorized. Please log in again to access parity data.');
+      }
+    }
     setEventsLoading(false);
     setDefaultResolved(true);
   }, [selectedEventId]);
@@ -569,6 +580,19 @@ export default function ParityPortal() {
 
   return (
     <div style={S.page}>
+      {/* ── Auth Error Banner ── */}
+      {authError && (
+        <div style={{ background: '#f8d7da', border: '1px solid #f5c6cb', color: '#721c24', padding: '0.75rem 1rem', marginBottom: '0.75rem', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span>{authError}</span>
+          <button
+            style={{ ...S.btn('primary'), fontSize: '0.8rem', padding: '0.3rem 0.75rem', marginLeft: '1rem' }}
+            onClick={() => window.location.href = '/login'}
+          >
+            Log In
+          </button>
+        </div>
+      )}
+
       {/* ── Event Picker (compact single row) ── */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
         <select style={{ ...S.input, width: 72, fontSize: '0.8rem' }} value={selectedYear}
@@ -578,7 +602,11 @@ export default function ParityPortal() {
         <select style={{ ...S.input, flex: '1 1 250px', minWidth: 0, fontSize: '0.8rem' }} value={selectedEventId ?? ''}
           onChange={e => handleEventChange(Number(e.target.value))}
           disabled={eventsLoading || events.length === 0}>
-          {events.length === 0 && <option value="">—{eventsLoading ? ' Loading...' : ' No events'}—</option>}
+          {events.length === 0 && (
+            <option value="">
+              —{eventsLoading ? ' Loading...' : authError ? ' Login required' : ' No events'}—
+            </option>
+          )}
           {events.filter(ev => ev.start_date_local.startsWith(String(selectedYear))).map(ev => (
             <option key={ev.id} value={ev.id}>
               {ev.event_name} ({ev.start_date_local})
