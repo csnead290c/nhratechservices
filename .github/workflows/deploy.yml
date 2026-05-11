@@ -151,6 +151,33 @@ jobs:
           fi
           
           echo ""
+          echo "=== API Health Check ==="
+          
+          echo "Checking API endpoints for fatal errors (HTTP 500)..."
+          
+          # Check auth endpoint - should not return 500
+          AUTH_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/auth.php?action=me" || echo "000")
+          if [ "$AUTH_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/auth.php returned HTTP 500 (PHP fatal error)"
+            exit 1
+          elif [ "$AUTH_STATUS" = "000" ]; then
+            echo "⚠ WARNING: Could not reach /api/auth.php"
+          else
+            echo "✓ /api/auth.php returned HTTP $AUTH_STATUS (not 500)"
+          fi
+          
+          # Check parity endpoint - should not return 500
+          PARITY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/parity.php?action=events" || echo "000")
+          if [ "$PARITY_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/parity.php returned HTTP 500 (PHP fatal error)"
+            exit 1
+          elif [ "$PARITY_STATUS" = "000" ]; then
+            echo "⚠ WARNING: Could not reach /api/parity.php"
+          else
+            echo "✓ /api/parity.php returned HTTP $PARITY_STATUS (not 500)"
+          fi
+          
+          echo ""
           echo "=== Post-Deploy Verification Complete ==="
           echo "Asset hash: $ASSET_HASH"
           echo "All checks passed"
