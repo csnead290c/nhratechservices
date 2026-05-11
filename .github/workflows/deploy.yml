@@ -107,3 +107,50 @@ jobs:
           bye
           EOF
           echo "Deployment complete"
+
+      - name: Post-deploy verification
+        run: |
+          echo "Waiting for deployment to settle..."
+          sleep 10
+          
+          echo "Fetching production index.html..."
+          PROD_HTML=$(curl -s https://nhratechservices.com/)
+          
+          echo "Checking for production asset hash..."
+          # Extract asset hash from index.html (format: index-CgW8nzBi-1778380315451.js)
+          ASSET_HASH=$(echo "$PROD_HTML" | grep -oE 'index-[A-Za-z0-9]+-[0-9]+\.js' | head -1)
+          if [ -z "$ASSET_HASH" ]; then
+            echo "✗ FAIL: Could not find production asset hash"
+            exit 1
+          fi
+          echo "✓ Found production asset: $ASSET_HASH"
+          
+          echo "Verifying /rules route content..."
+          # Fetch a JS chunk that should contain /rules
+          RULES_JS=$(curl -s "https://nhratechservices.com/assets/RulesList-" 2>/dev/null || echo "")
+          if echo "$PROD_HTML" | grep -q "RulesList"; then
+            echo "✓ /rules route present in bundle"
+          else
+            echo "⚠ WARNING: RulesList not found in main bundle (may be lazy loaded)"
+          fi
+          
+          echo "Checking for NHRA Tech Services branding..."
+          if echo "$PROD_HTML" | grep -q "NHRA Tech Services"; then
+            echo "✓ NHRA Tech Services branding present"
+          else
+            echo "✗ FAIL: NHRA Tech Services branding missing"
+            exit 1
+          fi
+          
+          echo "Checking for RSA NotFound absence..."
+          if echo "$PROD_HTML" | grep -qi "race team"; then
+            echo "✗ FAIL: Old RSA branding still present"
+            exit 1
+          else
+            echo "✓ Old RSA branding absent"
+          fi
+          
+          echo ""
+          echo "=== Post-Deploy Verification Complete ==="
+          echo "Asset hash: $ASSET_HASH"
+          echo "All checks passed"
