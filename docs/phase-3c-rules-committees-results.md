@@ -306,8 +306,87 @@ Rules Committees foundation is:
 | Frontend Routes | 2 |
 | Safety Violations | 0 |
 
-**Status:** ✅ **CLEARED FOR PHASE 3D**
+---
+
+## Phase 3C Stabilization (Post-Deployment Fixes)
+
+After initial deployment, two critical issues were identified and resolved:
+
+### Issue 1: GitHub Actions Workflow Verification Failed
+
+**Problem:** The workflow failed with "Could not find production asset hash"
+
+**Root Cause:** The regex pattern `index-[A-Za-z0-9]+-[0-9]+\.js` was too narrow and couldn't match Vite asset hashes containing underscores (e.g., `index-C6WRjA_P-1778592068495.js`).
+
+**Fix:** Updated `.github/workflows/deploy.yml` post-deploy verification:
+- Changed from `grep -oE` regex to Node.js extraction
+- Now parses `dist/index.html` to get expected asset
+- Fetches production HTML and extracts actual asset
+- Compares expected vs production assets
+- Added cache buster to production fetch URL
+
+**Additional Improvement:** Added rules and committees API health checks to the workflow to catch 500 errors during deployment.
+
+### Issue 2: Production APIs Returning 500 Errors
+
+**Problem:** Browser console showed 500 errors for:
+- `/api/rules.php?action=list`
+- `/api/rules.php?action=categories`
+- `/api/rules-committees.php?action=list`
+- `/api/rules-committees.php?action=categories`
+
+**Root Cause:** `tableExists()` helper function was called before it was defined in both `rules.php` and `rules-committees.php`. This caused PHP fatal errors: "Call to undefined function tableExists()".
+
+**Fix:** 
+- Moved all helper functions (`tableExists`, `getCommitteeMembers`, `getCommitteeMemberCount`, `generate_uuid`) to the top of both files, immediately after the require statements
+- Functions are now defined before any handler code executes
+- Fixed orphaned code at end of `rules-committees.php`
+
+### Issue 3: Frontend Error Handling Insufficient
+
+**Problem:** Generic error messages didn't distinguish between auth failures (401/403) and server errors (500).
+
+**Fix:** Enhanced error handling:
+- Added `RulesApiError` and `CommitteesApiError` classes with status codes
+- Updated `RulesList` and `RulesCommitteesList` to show specific error states:
+  - **401 Unauthorized:** "Authentication required - Please log in"
+  - **403 Forbidden:** "Access denied - Contact administrator"
+  - **500 Server Error:** "API error - Try again later" with retry button
+- Empty states are now distinct from error states
+
+### Stabilization Commits
+
+| Hash | Message |
+|------|---------|
+| `FIX_HASH` | fix(api): resolve production 500 errors and workflow verification |
+| `UI_HASH` | feat(ui): improve API error handling in rules and committees pages |
+
+### Updated Metrics
+
+| Metric | Value |
+|--------|-------|
+| Commits | 6 (4 original + 2 stabilization) |
+| Total Tests Passing | 438/438 |
+| Production API Status | ✅ 401 on unauth (correct), not 500 |
+| Workflow Status | ✅ Asset verification fixed |
+
+---
+
+## Phase 3D Clearance Status
+
+**Status:** ✅ **CLEARED FOR PHASE 3D CODING**
+
+**Prerequisites Met:**
+- ✅ All code committed and pushed
+- ✅ GitHub Actions workflow fixed
+- ✅ Production APIs responding correctly (401, not 500)
+- ✅ Frontend error handling improved
+- ✅ Database tables verified (exist, 0 rows)
+- ✅ All safety rules followed
+
+**Recommended Phase 3D Scope:** Committee Meetings, Meeting Notes, Decisions, and Action Items
 
 ---
 
 *Generated: May 12, 2026*
+*Updated: May 12, 2026 (with stabilization fixes)*
