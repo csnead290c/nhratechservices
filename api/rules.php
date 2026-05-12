@@ -16,6 +16,21 @@ require_once 'config.php';
 require_once 'functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
 
+// ─── Helpers (must be defined before use) ───────────────────────────────
+
+/**
+ * Check if a database table exists.
+ */
+function tableExists(PDO $pdo, string $tableName): bool {
+    try {
+        $stmt = $pdo->prepare("SHOW TABLES LIKE ?");
+        $stmt->execute([$tableName]);
+        return $stmt->rowCount() > 0;
+    } catch (PDOException $e) {
+        return false;
+    }
+}
+
 rsa_setCorsHeaders();
 
 $pdo = getDB();
@@ -182,15 +197,4 @@ function handleListCategories(PDO $pdo): void {
     $categories = $stmt->fetchAll(PDO::FETCH_COLUMN);
 
     echo json_encode(['categories' => $categories]);
-}
-
-// Helper: Check if a table exists
-function tableExists(PDO $pdo, string $tableName): bool {
-    try {
-        $stmt = $pdo->prepare("SHOW TABLES LIKE ?");
-        $stmt->execute([$tableName]);
-        return $stmt->rowCount() > 0;
-    } catch (PDOException $e) {
-        return false;
-    }
 }

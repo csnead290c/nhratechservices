@@ -135,17 +135,45 @@ jobs:
           echo "Waiting for deployment to settle..."
           sleep 10
           
-          echo "Fetching production index.html..."
-          PROD_HTML=$(curl -s https://nhratechservices.com/)
+          echo "Extracting expected asset hash from built index.html..."
+          EXPECTED_ASSET=$(node -e "
+            const fs = require('fs');
+            const html = fs.readFileSync('dist/index.html', 'utf8');
+            const m = html.match(/\/assets\/index-[^\"']+\.js/);
+            if (!m) { console.error('Could not find asset in dist/index.html'); process.exit(1); }
+            console.log(m[0].replace(/^\\//, ''));
+          ")
+          if [ -z "$EXPECTED_ASSET" ]; then
+            echo "✗ FAIL: Could not extract expected asset hash from dist/index.html"
+            exit 1
+          fi
+          echo "✓ Expected asset: $EXPECTED_ASSET"
           
-          echo "Checking for production asset hash..."
-          # Extract asset hash from index.html (format: index-CgW8nzBi-1778380315451.js)
-          ASSET_HASH=$(echo "$PROD_HTML" | grep -oE 'index-[A-Za-z0-9]+-[0-9]+\.js' | head -1)
-          if [ -z "$ASSET_HASH" ]; then
+          echo "Fetching production index.html..."
+          PROD_HTML=$(curl -s "https://nhratechservices.com/?_cb=$(date +%s)")
+          
+          echo "Extracting production asset hash..."
+          PROD_ASSET=$(node -e "
+            let html = '';
+            process.stdin.on('data', d => html += d);
+            process.stdin.on('end', () => {
+              const m = html.match(/\/assets\/index-[^\"']+\.js/);
+              if (!m) { console.error('Could not find asset in production'); process.exit(1); }
+              console.log(m[0].replace(/^\\//, ''));
+            });
+          " <<< "$PROD_HTML")
+          
+          if [ -z "$PROD_ASSET" ]; then
             echo "✗ FAIL: Could not find production asset hash"
             exit 1
           fi
-          echo "✓ Found production asset: $ASSET_HASH"
+          echo "✓ Production asset: $PROD_ASSET"
+          
+          if [ "$EXPECTED_ASSET" != "$PROD_ASSET" ]; then
+            echo "✗ FAIL: Asset mismatch - expected $EXPECTED_ASSET but found $PROD_ASSET"
+            exit 1
+          fi
+          echo "✓ Asset hash matches: $PROD_ASSET"
           
           echo "Verifying /rules route content..."
           # Fetch a JS chunk that should contain /rules
@@ -199,7 +227,43 @@ jobs:
             echo "✓ /api/parity.php returned HTTP $PARITY_STATUS (not 500)"
           fi
           
+          # Check rules endpoints - should not return 500
+          RULES_LIST_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/rules.php?action=list" || echo "000")
+          if [ "$RULES_LIST_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/rules.php?action=list returned HTTP 500 (PHP fatal error)"
+            exit 1
+          elif [ "$RULES_LIST_STATUS" = "000" ]; then
+            echo "⚠ WARNING: Could not reach /api/rules.php?action=list"
+          else
+            echo "✓ /api/rules.php?action=list returned HTTP $RULES_LIST_STATUS (not 500)"
+          fi
+          
+          RULES_CAT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/rules.php?action=categories" || echo "000")
+          if [ "$RULES_CAT_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/rules.php?action=categories returned HTTP 500 (PHP fatal error)"
+            exit 1
+          else
+            echo "✓ /api/rules.php?action=categories returned HTTP $RULES_CAT_STATUS (not 500)"
+          fi
+          
+          # Check rules-committees endpoints - should not return 500
+          COMMITTEES_LIST_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/rules-committees.php?action=list" || echo "000")
+          if [ "$COMMITTEES_LIST_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/rules-committees.php?action=list returned HTTP 500 (PHP fatal error)"
+            exit 1
+          else
+            echo "✓ /api/rules-committees.php?action=list returned HTTP $COMMITTEES_LIST_STATUS (not 500)"
+          fi
+          
+          COMMITTEES_CAT_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://nhratechservices.com/api/rules-committees.php?action=categories" || echo "000")
+          if [ "$COMMITTEES_CAT_STATUS" = "500" ]; then
+            echo "✗ FAIL: /api/rules-committees.php?action=categories returned HTTP 500 (PHP fatal error)"
+            exit 1
+          else
+            echo "✓ /api/rules-committees.php?action=categories returned HTTP $COMMITTEES_CAT_STATUS (not 500)"
+          fi
+          
           echo ""
           echo "=== Post-Deploy Verification Complete ==="
-          echo "Asset hash: $ASSET_HASH"
+          echo "Asset: $PROD_ASSET"
           echo "All checks passed"

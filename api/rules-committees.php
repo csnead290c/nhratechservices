@@ -24,6 +24,51 @@ require_once 'config.php';
 require_once 'functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
 
+// ─── Helpers (must be defined before use) ───────────────────────────────
+
+/**
+ * Check if a database table exists.
+ */
+function tableExists(PDO $pdo, string $table): bool {
+    $stmt = $pdo->query("SHOW TABLES LIKE '$table'");
+    return $stmt->fetchColumn() !== false;
+}
+
+/**
+ * Get all members for a committee.
+ */
+function getCommitteeMembers(PDO $pdo, int $committeeId): array {
+    $stmt = $pdo->prepare("SELECT cm.*, u.name as user_name, u.email as user_email
+        FROM committee_memberships cm
+        LEFT JOIN users u ON cm.user_id = u.id
+        WHERE cm.committee_id = ? AND cm.deleted_at IS NULL
+        ORDER BY FIELD(cm.role, 'chairman', 'co_chairman', 'secretary', 'member', 'advisor', 'liaison', 'guest', 'observer'), u.name");
+    $stmt->execute([$committeeId]);
+    return $stmt->fetchAll(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Get member count for a committee.
+ */
+function getCommitteeMemberCount(PDO $pdo, int $committeeId): int {
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM committee_memberships WHERE committee_id = ? AND deleted_at IS NULL");
+    $stmt->execute([$committeeId]);
+    return (int) $stmt->fetchColumn();
+}
+
+/**
+ * Generate a UUID v4.
+ */
+function generate_uuid(): string {
+    return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+        mt_rand(0, 0xffff),
+        mt_rand(0, 0x0fff) | 0x4000,
+        mt_rand(0, 0x3fff) | 0x8000,
+        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+    );
+}
+
 rsa_setCorsHeaders();
 
 $pdo = getDB();
@@ -590,37 +635,4 @@ function handleEligibleUsers(PDO $pdo): void {
     $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
     echo json_encode(['users' => $users, 'count' => count($users)]);
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────
-
-function tableExists(PDO $pdo, string $table): bool {
-    $stmt = $pdo->query("SHOW TABLES LIKE '$table'");
-    return $stmt->fetchColumn() !== false;
-}
-
-function getCommitteeMembers(PDO $pdo, int $committeeId): array {
-    $stmt = $pdo->prepare("SELECT cm.*, u.name as user_name, u.email as user_email
-        FROM committee_memberships cm
-        LEFT JOIN users u ON cm.user_id = u.id
-        WHERE cm.committee_id = ? AND cm.deleted_at IS NULL
-        ORDER BY FIELD(cm.role, 'chairman', 'co_chairman', 'secretary', 'member', 'advisor', 'liaison', 'guest', 'observer'), u.name");
-    $stmt->execute([$committeeId]);
-    return $stmt->fetchAll(PDO::FETCH_ASSOC);
-}
-
-function getCommitteeMemberCount(PDO $pdo, int $committeeId): int {
-    $stmt = $pdo->prepare("SELECT COUNT(*) FROM committee_memberships WHERE committee_id = ? AND deleted_at IS NULL");
-    $stmt->execute([$committeeId]);
-    return (int) $stmt->fetchColumn();
-}
-
-function generate_uuid(): string {
-    return sprintf('%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
-        mt_rand(0, 0xffff), mt_rand(0, 0xffff),
-        mt_rand(0, 0xffff),
-        mt_rand(0, 0x0fff) | 0x4000,
-        mt_rand(0, 0x3fff) | 0x8000,
-        mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
-    );
 }
