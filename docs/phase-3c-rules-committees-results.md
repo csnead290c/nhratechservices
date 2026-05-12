@@ -354,35 +354,64 @@ After initial deployment, two critical issues were identified and resolved:
   - **500 Server Error:** "API error - Try again later" with retry button
 - Empty states are now distinct from error states
 
-### Stabilization Commits
+### Stabilization Commits (Actual Hashes)
 
-| Hash | Message |
-|------|---------|
-| `FIX_HASH` | fix(api): resolve production 500 errors and workflow verification |
-| `UI_HASH` | feat(ui): improve API error handling in rules and committees pages |
+| Hash | Message | Description |
+|------|---------|-------------|
+| `d2a3c00` | test(nhrats): fix committeesApi test mocks | Fixed test mocks to include `text()` method for new error handling |
+| `2093377` | docs(nhrats): update phase 3C results with stabilization fixes | This documentation update with actual verification results |
+| `86ad67e` | feat(ui): improve API error handling in rules and committees pages | Added RulesApiError/CommitteesApiError classes, specific 401/403/500 UI states |
+| `d854df9` | fix(api): resolve production 500 errors and workflow verification | Moved tableExists before use, Node.js asset extraction, API health checks |
 
-### Updated Metrics
+### Verification Results
 
+**Production API Status (Verified 2026-05-12):**
+| Endpoint | Status | Result |
+|----------|--------|--------|
+| `/api/rules.php?action=list` | 401 | ✅ Not 500 |
+| `/api/rules.php?action=categories` | 401 | ✅ Not 500 |
+| `/api/rules-committees.php?action=list` | 401 | ✅ Not 500 |
+| `/api/rules-committees.php?action=categories` | 401 | ✅ Not 500 |
+
+**Root Cause Confirmed:**
+- PHP fatal error: `Call to undefined function tableExists()`
+- Fixed by moving helper functions to top of files before any handler code
+
+**Updated Metrics:**
 | Metric | Value |
 |--------|-------|
-| Commits | 6 (4 original + 2 stabilization) |
-| Total Tests Passing | 438/438 |
-| Production API Status | ✅ 401 on unauth (correct), not 500 |
-| Workflow Status | ✅ Asset verification fixed |
+| Total Commits | 8 (4 original + 4 stabilization) |
+| Rules/Committees Tests | 22/22 passing |
+| Build Status | ✅ Success |
+| Production API Status | ✅ 401 on unauth, not 500 |
+| Workflow Status | ⚠️ Cannot verify (GitHub auth required) |
+| Working Tree | Clean (only manuals manifest.json modified) |
 
 ---
 
 ## Phase 3D Clearance Status
 
-**Status:** ✅ **CLEARED FOR PHASE 3D CODING**
+**Status:** ⚠️ **CONDITIONALLY CLEARED — PENDING WORKFLOW VERIFICATION**
 
-**Prerequisites Met:**
-- ✅ All code committed and pushed
-- ✅ GitHub Actions workflow fixed
-- ✅ Production APIs responding correctly (401, not 500)
-- ✅ Frontend error handling improved
-- ✅ Database tables verified (exist, 0 rows)
+**Verified:**
+- ✅ All code committed and pushed (hashes: d2a3c00, 2093377, 86ad67e, d854df9)
+- ✅ Production APIs responding 401 (not 500) — curl verified all 4 endpoints
+- ✅ Frontend error handling improved with specific 401/403/500 states
+- ✅ Build succeeds (npm run build)
+- ✅ Rules/Committees tests pass (22/22)
+- ✅ Working tree clean (except manuals manifest.json)
 - ✅ All safety rules followed
+
+**Cannot Verify (GitHub auth required):**
+- ⚠️ GitHub Actions workflow run status
+- ⚠️ Post-deploy asset verification step result
+- ⚠️ Production asset filename
+
+**Recommendation:**
+1. Log into GitHub and verify Actions workflow ran successfully
+2. Confirm latest run SHA matches d2a3c00
+3. If workflow green → **FULLY CLEARED FOR PHASE 3D**
+4. If workflow red → Fix only the failing step, re-run, then clear
 
 **Recommended Phase 3D Scope:** Committee Meetings, Meeting Notes, Decisions, and Action Items
 
