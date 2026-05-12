@@ -75,8 +75,9 @@ describe('committeesApi', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 403,
+        text: () => Promise.resolve('Missing capability'),
         json: () => Promise.resolve({ error: 'Missing capability' }),
-      } as Response);
+      } as unknown as Response);
 
       await expect(fetchCommittees()).rejects.toThrow('Missing capability');
     });
@@ -321,8 +322,9 @@ describe('committeesApi', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 401,
+        text: () => Promise.resolve('Authentication required'),
         json: () => Promise.resolve({ error: 'Authentication required' }),
-      } as Response);
+      } as unknown as Response);
 
       await expect(fetchCommittees()).rejects.toThrow('Authentication required');
     });
@@ -331,10 +333,22 @@ describe('committeesApi', () => {
       global.fetch = vi.fn().mockResolvedValue({
         ok: false,
         status: 403,
+        text: () => Promise.resolve('Missing capability: committees.admin'),
         json: () => Promise.resolve({ error: 'Missing capability: committees.admin' }),
-      } as Response);
+      } as unknown as Response);
 
       await expect(createCommittee({ name: 'Test' })).rejects.toThrow('Missing capability');
+    });
+
+    it('throws on 500 server error', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Internal server error'),
+        json: () => Promise.resolve({ error: 'Internal server error' }),
+      } as unknown as Response);
+
+      await expect(fetchCommittees()).rejects.toThrow('Internal server error');
     });
 
     it('throws on network error', async () => {
