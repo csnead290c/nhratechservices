@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { fetchRules, fetchCategories, type Rule } from '../domain/rules/rulesApi';
+import { fetchRules, fetchCategories, type Rule, RulesApiError } from '../domain/rules/rulesApi';
 
 const CATEGORY_COLORS: Record<string, string> = {
   Technical: '#3b82f6',
@@ -46,7 +46,19 @@ export default function RulesList() {
       const data = await fetchRules(params);
       setRules(data.rules);
     } catch (e: any) {
-      setError(e.message || 'Failed to load rules');
+      if (e instanceof RulesApiError) {
+        if (e.code === 'unauthorized') {
+          setError('unauthorized');
+        } else if (e.code === 'forbidden') {
+          setError('forbidden');
+        } else if (e.code === 'server_error') {
+          setError('server_error');
+        } else {
+          setError(e.message || 'Failed to load rules');
+        }
+      } else {
+        setError(e.message || 'Failed to load rules');
+      }
     } finally {
       setLoading(false);
     }
@@ -156,8 +168,62 @@ export default function RulesList() {
         </select>
       </div>
 
-      {/* Error */}
-      {error && (
+      {/* Error States */}
+      {error === 'unauthorized' && (
+        <div style={{
+          padding: '1rem', marginBottom: '1rem',
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          borderRadius: 'var(--radius-md)', color: '#ef4444',
+        }}>
+          <strong>Authentication required</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            Please log in to view rules.
+          </p>
+        </div>
+      )}
+      {error === 'forbidden' && (
+        <div style={{
+          padding: '1rem', marginBottom: '1rem',
+          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          border: '1px solid rgba(245, 158, 11, 0.3)',
+          borderRadius: 'var(--radius-md)', color: '#f59e0b',
+        }}>
+          <strong>Access denied</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            You don't have permission to view rules. Contact an administrator.
+          </p>
+        </div>
+      )}
+      {error === 'server_error' && (
+        <div style={{
+          padding: '1rem', marginBottom: '1rem',
+          backgroundColor: 'rgba(239, 68, 68, 0.1)',
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          borderRadius: 'var(--radius-md)', color: '#ef4444',
+        }}>
+          <strong>Rules API error</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            The rules service encountered an error. Please try again later or contact support.
+          </p>
+          <button
+            onClick={loadRules}
+            style={{
+              marginTop: '0.75rem',
+              padding: '0.5rem 1rem',
+              background: '#ef4444',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {error && error !== 'unauthorized' && error !== 'forbidden' && error !== 'server_error' && (
         <div style={{
           padding: '1rem', marginBottom: '1rem',
           backgroundColor: 'rgba(239, 68, 68, 0.1)',

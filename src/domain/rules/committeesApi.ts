@@ -111,6 +111,17 @@ function getToken(): string | null {
   return localStorage.getItem('rsa_token');
 }
 
+export class CommitteesApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code: 'unauthorized' | 'forbidden' | 'server_error' | 'unknown'
+  ) {
+    super(message);
+    this.name = 'CommitteesApiError';
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -124,8 +135,16 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(error.error || `API error: ${response.status}`);
+    const errorText = await response.text().catch(() => 'Unknown error');
+    let code: CommitteesApiError['code'] = 'unknown';
+    if (response.status === 401) code = 'unauthorized';
+    else if (response.status === 403) code = 'forbidden';
+    else if (response.status >= 500) code = 'server_error';
+    throw new CommitteesApiError(
+      `Committees API error (${response.status}): ${errorText}`,
+      response.status,
+      code
+    );
   }
 
   return response.json();

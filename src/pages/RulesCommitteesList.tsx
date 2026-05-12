@@ -8,7 +8,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useCapabilities } from '../domain/config/useCapabilities';
-import { fetchCommittees, fetchCommitteeCategories, type Committee } from '../domain/rules/committeesApi';
+import { fetchCommittees, fetchCommitteeCategories, type Committee, CommitteesApiError } from '../domain/rules/committeesApi';
 
 export default function RulesCommitteesList() {
   const { can } = useCapabilities();
@@ -37,7 +37,19 @@ export default function RulesCommitteesList() {
       const response = await fetchCommittees(params);
       setCommittees(response.committees);
     } catch (e: any) {
-      setError(e.message || 'Failed to load committees');
+      if (e instanceof CommitteesApiError) {
+        if (e.code === 'unauthorized') {
+          setError('unauthorized');
+        } else if (e.code === 'forbidden') {
+          setError('forbidden');
+        } else if (e.code === 'server_error') {
+          setError('server_error');
+        } else {
+          setError(e.message || 'Failed to load committees');
+        }
+      } else {
+        setError(e.message || 'Failed to load committees');
+      }
     } finally {
       setLoading(false);
     }
@@ -141,8 +153,68 @@ export default function RulesCommitteesList() {
         )}
       </div>
 
-      {/* Error State */}
-      {error && (
+      {/* Error States */}
+      {error === 'unauthorized' && (
+        <div style={{
+          padding: '1rem',
+          background: '#fee2e2',
+          border: '1px solid #fecaca',
+          borderRadius: '6px',
+          color: '#dc2626',
+          marginBottom: '1rem',
+        }}>
+          <strong>Authentication required</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            Please log in to view committees.
+          </p>
+        </div>
+      )}
+      {error === 'forbidden' && (
+        <div style={{
+          padding: '1rem',
+          background: '#fef3c7',
+          border: '1px solid #fcd34d',
+          borderRadius: '6px',
+          color: '#92400e',
+          marginBottom: '1rem',
+        }}>
+          <strong>Access denied</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            You don't have permission to view committees. Contact an administrator.
+          </p>
+        </div>
+      )}
+      {error === 'server_error' && (
+        <div style={{
+          padding: '1rem',
+          background: '#fee2e2',
+          border: '1px solid #fecaca',
+          borderRadius: '6px',
+          color: '#dc2626',
+          marginBottom: '1rem',
+        }}>
+          <strong>Committees API error</strong>
+          <p style={{ margin: '0.5rem 0 0 0', fontSize: '0.9rem' }}>
+            The committees service encountered an error. Please try again later or contact support.
+          </p>
+          <button
+            onClick={loadCommittees}
+            style={{
+              marginTop: '0.75rem',
+              padding: '0.5rem 1rem',
+              background: '#dc2626',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '0.875rem',
+            }}
+          >
+            Retry
+          </button>
+        </div>
+      )}
+      {error && error !== 'unauthorized' && error !== 'forbidden' && error !== 'server_error' && (
         <div style={{
           padding: '1rem',
           background: '#fee2e2',
