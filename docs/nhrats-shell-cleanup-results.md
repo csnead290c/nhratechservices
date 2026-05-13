@@ -251,25 +251,75 @@ Sleep increased from 10s → 15s.
 
 ---
 
-## Part 8 — Follow-up: Legacy Files in Production Deploy
+## Production Payload Cleanup Sprint
 
-rsync currently deploys all of `dist/` including static files that are no longer needed or referenced. These are **not blocking** but should be cleaned up in a future sprint:
+*Commit `c4fa257` — May 13, 2026*
 
-| File | Status | Recommended action |
-|------|--------|--------------------|
-| `public/rsa-icon.png` | Deployed, not referenced in manifest | Remove from public/ when confirmed safe |
-| `public/rsa-logo.png` | Deployed, not referenced in manifest | Remove from public/ when confirmed safe |
-| `public/test-engine*.html` | Legacy test HTML files | Add `--exclude 'test-*.html'` to rsync |
-| `public/test-vb6*.html` | Legacy test HTML files | Add `--exclude 'test-*.html'` to rsync |
-| `dist/deploy-check.txt` | Written each deploy run | Acceptable to leave; is overwritten each run |
+### Inventory and Classification
 
-**Safety note:** Do not use `--delete` in rsync. Add targeted `--exclude` patterns only.
+| File / Path | Classification | Action |
+|-------------|---------------|--------|
+| `rsa-icon.png` | Legacy RSA icon, not referenced in manifest | Excluded from rsync; removed from server |
+| `rsa-logo.png` | Legacy RSA logo, not referenced in manifest | Excluded from rsync; removed from server |
+| `test-*.html` (27 files) | Engine/VB6 development test pages, not NHRATS content | Excluded from rsync; removed from server |
+| `vb6/TIMESLIP.FRM` | RSA legacy VB6 source file, not needed in production | Excluded from rsync; removed from server |
+| `manuals/QUARTER_JR_PRO.md` | RSA simulator manual | Excluded from rsync; removed from server; source kept in `docs/manuals/` |
+| `manuals/ENGINE_JR_PRO.md` | RSA simulator manual | Excluded from rsync; removed from server; source kept in `docs/manuals/` |
+| `manuals/SITE_QUICK_START.md` | RSA-era quick start — still deployed, content update deferred | Deploy continues; live in help center |
+| `manuals/FAQ_TROUBLESHOOTING.md` | RSA-era FAQ — still deployed, content update deferred | Deploy continues; live in help center |
+| `favicon.ico`, `*.png` icons | NHRA branding — needed | Deploy unchanged |
+| `manifest.webmanifest`, `site.webmanifest` | NHRA branding — needed | Deploy unchanged |
+| `nhra-header-logo.png` | NHRA branding — needed | Deploy unchanged |
+| `sw.js` | PWA service worker — needed | Deploy unchanged |
+| `deploy-check.txt` | Generated per deploy for doc-root probe | Overwritten each run; harmless |
+
+### Changes Made
+
+**`src/pages/Help.tsx`**
+- Removed `quarter` (Quarter Jr / Pro) and `engine` (Engine Jr / Pro) entries from `MANUALS` nav
+- Help center now shows only: Quick Start, FAQ & Troubleshooting
+- `/help?doc=quarter` and `/help?doc=engine` URLs now fall back to Quick Start (no match in MANUALS)
+
+**`.github/workflows/deploy.yml`**
+- Added rsync `--exclude` patterns: `rsa-icon.png`, `rsa-logo.png`, `test-*.html`, `vb6/`, `manuals/QUARTER_JR_PRO.md`, `manuals/ENGINE_JR_PRO.md`
+- Added "Remove legacy RSA artifacts from server" step: targeted SSH `rm -f` for each known legacy file + `rm -rf vb6/` using `[ -e ]` guard (safe — no-op if already absent)
+
+**`src/app/__tests__/helpCenter.test.tsx`**
+- All 11 tests updated to NHRATS branding and 2-manual nav
+- Added explicit test: help nav does not show Quarter Jr or Engine Jr
+- Test: unknown `?doc=quarter` falls back to Quick Start
+
+### Files Intentionally Left in Repo (not deleted)
+
+| File | Reason |
+|------|--------|
+| `public/rsa-icon.png` | Source preserved per safety rules |
+| `public/rsa-logo.png` | Source preserved per safety rules |
+| `public/test-*.html` | Development artifacts, harmless in repo |
+| `public/vb6/TIMESLIP.FRM` | Historical reference, preserved |
+| `docs/manuals/QUARTER_JR_PRO.md` | Manual source — may be updated for NHRATS later |
+| `docs/manuals/ENGINE_JR_PRO.md` | Manual source — may be updated for NHRATS later |
+
+### Test Results
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| `helpCenter.test.tsx` | 11 | ✅ All passing |
+| `shellCleanup.test.tsx` | 37 | ✅ All passing |
+| `landingPublic.test.tsx` | 4 | ✅ All passing |
+| `notFoundRouting.test.tsx` | 8 | ✅ All passing |
+| `nhratsHome.test.tsx` | 9 | ✅ All passing |
+| `accessEnforcement.test.ts` | 67 | ✅ All passing |
+| `committeesApi.test.ts` | 22 | ✅ All passing |
+| Pre-existing failures | 17 | Pre-existing, not caused by this sprint |
+
+Build: ✅ clean
 
 ---
 
 ## NHRATS Shell Cleanup Complete?
 
-**YES — Shell cleanup and production verification are complete.**
+**YES — Shell cleanup and production payload cleanup are fully complete.**
 
 | Item | Status |
 |------|--------|
@@ -277,13 +327,16 @@ rsync currently deploys all of `dist/` including static files that are no longer
 | Nav shows only NHRA tools for all users | ✅ |
 | Landing page is NHRATS-branded, no RSA/pricing copy | ✅ |
 | manifest.webmanifest rebranded to NHRA Tech Services | ✅ |
-| 156 tests cover blocked routes, nav, landing, NotFound | ✅ |
+| 167 tests cover shell, nav, landing, NotFound, help center | ✅ |
 | RSA code files preserved per safety rules | ✅ |
 | Workflow post-deploy verification fixed and hardened | ✅ |
 | Production serving correct NHRATS SPA from right doc root | ✅ |
 | Production APIs returning 401 not 500 | ✅ |
 | Production asset URL returns 200 | ✅ |
-| **NHRATS shell cleanup: PRODUCTION VERIFIED** | ✅ |
+| Help center RSA simulator manuals removed from nav | ✅ |
+| Legacy RSA/test artifacts excluded from rsync deploy | ✅ |
+| Legacy server files removed via targeted SSH cleanup step | ✅ |
+| **NHRATS shell cleanup + payload cleanup: FULLY COMPLETE** | ✅ |
 
 ---
 

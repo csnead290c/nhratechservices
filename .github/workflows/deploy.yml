@@ -136,6 +136,47 @@ jobs:
             "${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:/home/customer/www/nhratechservices.com/public_html/"
           echo "Deployment complete"
 
+      - name: Remove legacy RSA artifacts from server
+        run: |
+          echo "Removing legacy RSA/test artifacts from production server..."
+          ROOT="/home/customer/www/nhratechservices.com/public_html"
+          SSH_CMD="ssh -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes ${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}"
+
+          remove_if_exists() {
+            local path="$1"
+            $SSH_CMD "[ -e \"$ROOT/$path\" ] && rm -f \"$ROOT/$path\" && echo \"removed: $path\" || echo \"not present: $path\""
+          }
+
+          remove_if_exists "rsa-icon.png"
+          remove_if_exists "rsa-logo.png"
+          remove_if_exists "manuals/QUARTER_JR_PRO.md"
+          remove_if_exists "manuals/ENGINE_JR_PRO.md"
+          remove_if_exists "test-athroat-calculation.html"
+          remove_if_exists "test-basecase.html"
+          remove_if_exists "test-both.html"
+          remove_if_exists "test-carb-cfm-fix.html"
+          remove_if_exists "test-curve-comparison.html"
+          remove_if_exists "test-curve-debug.html"
+          remove_if_exists "test-detailed.html"
+          remove_if_exists "test-dyno-curve-accuracy.html"
+          remove_if_exists "test-engine-pro-calc.html"
+          remove_if_exists "test-engine.html"
+          remove_if_exists "test-exact-basecase.html"
+          remove_if_exists "test-exact-vb6-trace.html"
+          remove_if_exists "test-formula-check.html"
+          remove_if_exists "test-inline-fix.html"
+          remove_if_exists "test-input-sensitivity.html"
+          remove_if_exists "test-iteration-divergence.html"
+          remove_if_exists "test-iteration-trace.html"
+          remove_if_exists "test-precision.html"
+          remove_if_exists "test-single-precision.html"
+          remove_if_exists "test-vb6-curve.html"
+          remove_if_exists "test-vb6-engine-function.html"
+          remove_if_exists "test-vb6-precision-final.html"
+          remove_if_exists "test-vb6-precision.html"
+          $SSH_CMD "[ -d \"$ROOT/vb6\" ] && rm -rf \"$ROOT/vb6\" && echo \"removed: vb6/\" || echo \"not present: vb6/\""
+          echo "Legacy artifact cleanup complete"
+
       - name: Post-deploy verification
         run: |
           echo "Waiting for deployment to settle..."
