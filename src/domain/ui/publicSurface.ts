@@ -63,13 +63,10 @@ export const INTERNAL_ROUTES: Record<string, InternalModule> = {
   '/tech': 'techMaster',
 };
 
-/** Public core routes (always safe to link for non-internal users). */
+/** Public core routes (always safe to link for non-internal users on nhratechservices.com). */
 export const PUBLIC_CORE_ROUTES = [
-  '/et-sim',
-  '/engine-sim',
-  '/vehicles',
-  '/calculators',
-  '/about',
+  '/login',
+  '/help',
 ] as const;
 
 // ── Context for visibility checks ──────────────────────────────────

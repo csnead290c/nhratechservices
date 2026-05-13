@@ -166,33 +166,15 @@ function NhratsDashboard() {
 }
 
 function Home() {
-  const { isAuthenticated, user } = useAuth();
-  const { plan } = useCapabilities();
+  const { isAuthenticated } = useAuth();
 
   // Show landing page for non-authenticated users
   if (!isAuthenticated) {
     return <Landing />;
   }
 
-  // Show NHRATS dashboard for NHRA plan users
-  if (plan === 'nhra') {
-    return <NhratsDashboard />;
-  }
-
-  // For non-NHRA authenticated users, show a simple dashboard
-  // (preserving minimal RSA functionality for any remaining non-NHRA users)
-  return (
-    <Page title="">
-      <div style={{ maxWidth: '960px', margin: '0 auto', padding: '2rem 1rem' }}>
-        <h1 style={{ fontSize: '1.75rem', marginBottom: '0.5rem' }}>
-          Welcome back{user?.displayName ? `, ${user.displayName}` : ''}
-        </h1>
-        <p style={{ color: 'var(--color-muted)' }}>
-          Access your tools from the navigation menu above.
-        </p>
-      </div>
-    </Page>
-  );
+  // All authenticated users on nhratechservices.com see the NHRATS dashboard
+  return <NhratsDashboard />;
 }
 
 export default Home;

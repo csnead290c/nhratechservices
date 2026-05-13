@@ -321,7 +321,7 @@ export default function MatchMyTimes({
           {step === 'input' && (
             <>
               <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '20px' }}>
-                Enter your actual run times. RSA will automatically adjust your vehicle specs 
+                Enter your actual run times. The simulator will automatically adjust your vehicle specs
                 to match your real-world performance.
               </p>
 
