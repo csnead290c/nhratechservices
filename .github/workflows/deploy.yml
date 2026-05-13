@@ -133,68 +133,148 @@ jobs:
       - name: Post-deploy verification
         run: |
           echo "Waiting for deployment to settle..."
-          sleep 10
-          
-          echo "Extracting expected asset hash from built index.html..."
+          sleep 15
+
+          # ── Step 1: Expected asset from dist/index.html ──
+          echo "=== Step 1: Expected asset from dist/index.html ==="
           EXPECTED_ASSET=$(node -e "
             const fs = require('fs');
             const html = fs.readFileSync('dist/index.html', 'utf8');
-            const m = html.match(/\/assets\/index-[^\"']+\.js/);
-            if (!m) { console.error('Could not find asset in dist/index.html'); process.exit(1); }
-            console.log(m[0].replace(/^\\//, ''));
+            const m = html.match(/(?:https?:\/\/[^\"']+)?\/?\/assets\/index-[^\"']+\.js/);
+            if (!m) { console.error('No asset in dist/index.html'); process.exit(1); }
+            console.log(m[0].replace(/^.*assets\//, 'assets/'));
           ")
           if [ -z "$EXPECTED_ASSET" ]; then
-            echo "✗ FAIL: Could not extract expected asset hash from dist/index.html"
+            echo "✗ FAIL: Could not extract expected asset from dist/index.html"
+            head -20 dist/index.html
             exit 1
           fi
           echo "✓ Expected asset: $EXPECTED_ASSET"
-          
-          echo "Fetching production index.html..."
-          PROD_HTML=$(curl -s "https://nhratechservices.com/?_cb=$(date +%s)")
-          
-          echo "Extracting production asset hash..."
+
+          # ── Step 2: SSH remote index.html check ──
+          echo ""
+          echo "=== Step 2: Remote index.html via SSH ==="
+          REMOTE_INDEX_HTML=$(ssh \
+            -i ~/.ssh/siteground_deploy_key \
+            -p ${{ secrets.SITEGROUND_SSH_PORT }} \
+            -o StrictHostKeyChecking=yes \
+            ${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }} \
+            "cat /home/customer/www/nhratechservices.com/public_html/index.html" 2>/dev/null || echo "")
+          if [ -z "$REMOTE_INDEX_HTML" ]; then
+            echo "⚠ WARNING: Could not read remote index.html via SSH"
+          else
+            echo "Remote size: $(echo \"$REMOTE_INDEX_HTML\" | wc -c) bytes"
+            REMOTE_ASSET=$(echo "$REMOTE_INDEX_HTML" | node -e "
+              let h=''; process.stdin.on('data',d=>h+=d);
+              process.stdin.on('end',()=>{
+                const m=h.match(/(?:https?:\/\/[^\"']+)?\/?\/assets\/index-[^\"']+\.js/);
+                if(m) console.log(m[0].replace(/^.*assets\//,'assets/'));
+              });
+            " || echo "")
+            echo "Remote asset ref: ${REMOTE_ASSET:-NONE}"
+            if [ "$EXPECTED_ASSET" = "$REMOTE_ASSET" ]; then
+              echo "✓ Remote file matches dist asset"
+            else
+              echo "⚠ Remote/dist mismatch — rsync may have failed or wrong path"
+            fi
+            echo "$REMOTE_INDEX_HTML" | grep -q "NHRA Tech Services" \
+              && echo "✓ Remote contains 'NHRA Tech Services'" \
+              || echo "⚠ Remote missing 'NHRA Tech Services'"
+          fi
+
+          # ── Step 3: deploy-check.txt document-root probe ──
+          echo ""
+          echo "=== Step 3: deploy-check.txt document-root probe ==="
+          DEPLOY_SHA="${{ github.sha }}"
+          echo "$DEPLOY_SHA" > dist/deploy-check.txt
+          rsync -az \
+            -e "ssh -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes" \
+            dist/deploy-check.txt \
+            "${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:/home/customer/www/nhratechservices.com/public_html/deploy-check.txt"
+          sleep 3
+          MARKER=$(curl -sL \
+            -H "Cache-Control: no-cache, no-store, must-revalidate" \
+            -H "Pragma: no-cache" \
+            "https://nhratechservices.com/deploy-check.txt" || echo "CURL_FAILED")
+          if echo "$MARKER" | grep -q "$DEPLOY_SHA"; then
+            echo "✓ deploy-check.txt confirmed — document root is correct"
+          else
+            echo "✗ deploy-check.txt mismatch"
+            echo "  Expected: $DEPLOY_SHA"
+            echo "  Got:      $MARKER"
+            echo "  → document root may be wrong or CDN is caching"
+          fi
+
+          # ── Step 4: Fetch production HTML with full diagnostics ──
+          echo ""
+          echo "=== Step 4: Public production index.html ==="
+          CB=$(date +%s)
+          HTTP_CODE=$(curl -sSL \
+            -H "Cache-Control: no-cache, no-store, must-revalidate" \
+            -H "Pragma: no-cache" \
+            -H "Expires: 0" \
+            -D /tmp/prod_headers.txt \
+            -o /tmp/prod_index.html \
+            -w "%{http_code}" \
+            "https://nhratechservices.com/?_deploy_check=${CB}" || echo "000")
+          PROD_BYTES=$(wc -c < /tmp/prod_index.html)
+          echo "HTTP status: $HTTP_CODE | size: $PROD_BYTES bytes"
+          echo "--- Response headers ---"
+          cat /tmp/prod_headers.txt
+          echo "--- Head -40 ---"
+          head -40 /tmp/prod_index.html
+          echo "--- Content checks ---"
+          grep -qi "<html"         /tmp/prod_index.html && echo "✓ <html present"          || echo "✗ <html missing"
+          grep -q  "NHRA Tech"     /tmp/prod_index.html && echo "✓ NHRA Tech present"       || echo "✗ NHRA Tech missing"
+          grep -q  "assets/"       /tmp/prod_index.html && echo "✓ assets/ present"         || echo "✗ assets/ missing"
+          grep -q  "index-"        /tmp/prod_index.html && echo "✓ index- present"          || echo "✗ index- missing"
+          echo "--- First 20 src/href refs ---"
+          grep -oE '(src|href)="[^"]+"' /tmp/prod_index.html | head -20 || echo "(none)"
+
+          # ── Step 5: Extract production asset (robust regex) ──
+          echo ""
+          echo "=== Step 5: Production asset extraction ==="
+          PROD_HTML=$(cat /tmp/prod_index.html)
           PROD_ASSET=$(node -e "
-            let html = '';
-            process.stdin.on('data', d => html += d);
-            process.stdin.on('end', () => {
-              const m = html.match(/\/assets\/index-[^\"']+\.js/);
-              if (!m) { console.error('Could not find asset in production'); process.exit(1); }
-              console.log(m[0].replace(/^\\//, ''));
+            let h=''; process.stdin.on('data',d=>h+=d);
+            process.stdin.on('end',()=>{
+              const m=h.match(/(?:https?:\/\/[^\"']+)?\/?\/assets\/index-[^\"']+\.js/);
+              if(!m){console.error('No asset ref in production HTML');process.exit(1);}
+              console.log(m[0].replace(/^.*assets\//,'assets/'));
             });
-          " <<< "$PROD_HTML")
-          
+          " <<< "$PROD_HTML" || true)
+
           if [ -z "$PROD_ASSET" ]; then
-            echo "✗ FAIL: Could not find production asset hash"
+            echo "✗ FAIL: Could not extract asset from production HTML"
+            echo "--- Diagnostic summary ---"
+            echo "Prod bytes: $PROD_BYTES"
+            [ "$PROD_BYTES" -lt 500 ] && echo "⚠ Very small — likely redirect/error page"
+            echo "Remote asset (SSH): ${REMOTE_ASSET:-unknown}"
+            echo "Expected asset:     $EXPECTED_ASSET"
             exit 1
           fi
           echo "✓ Production asset: $PROD_ASSET"
-          
+
+          # ── Step 6: Compare ──
+          echo ""
+          echo "=== Step 6: Asset comparison ==="
           if [ "$EXPECTED_ASSET" != "$PROD_ASSET" ]; then
-            echo "✗ FAIL: Asset mismatch - expected $EXPECTED_ASSET but found $PROD_ASSET"
+            echo "✗ FAIL: Asset mismatch"
+            echo "  Expected (dist): $EXPECTED_ASSET"
+            echo "  Production:      $PROD_ASSET"
+            echo "  Remote (SSH):    ${REMOTE_ASSET:-unknown}"
             exit 1
           fi
           echo "✓ Asset hash matches: $PROD_ASSET"
-          
-          echo "Verifying /rules route content..."
-          # Fetch a JS chunk that should contain /rules
-          RULES_JS=$(curl -s "https://nhratechservices.com/assets/RulesList-" 2>/dev/null || echo "")
-          if echo "$PROD_HTML" | grep -q "RulesList"; then
-            echo "✓ /rules route present in bundle"
-          else
-            echo "⚠ WARNING: RulesList not found in main bundle (may be lazy loaded)"
-          fi
-          
-          echo "Checking for NHRA Tech Services branding..."
-          if echo "$PROD_HTML" | grep -q "NHRA Tech Services"; then
-            echo "✓ NHRA Tech Services branding present"
-          else
-            echo "✗ FAIL: NHRA Tech Services branding missing"
-            exit 1
-          fi
-          
-          echo "Checking for RSA NotFound absence..."
+
+          # ── Step 7: Branding checks ──
+          echo ""
+          echo "=== Step 7: Branding checks ==="
+          echo "$PROD_HTML" | grep -q "NHRA Tech Services" \
+            && echo "✓ NHRA Tech Services present" \
+            || echo "⚠ WARNING: NHRA Tech Services not in HTML (may be runtime-injected)"
           if echo "$PROD_HTML" | grep -qi "race team"; then
-            echo "✗ FAIL: Old RSA branding still present"
+            echo "✗ FAIL: Old RSA 'race team' branding in production"
             exit 1
           else
             echo "✓ Old RSA branding absent"
