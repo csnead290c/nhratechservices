@@ -19,8 +19,6 @@ interface ManualEntry {
 
 const MANUALS: ManualEntry[] = [
   { id: 'quick-start', label: 'Quick Start', file: 'SITE_QUICK_START.md' },
-  { id: 'quarter',     label: 'Quarter Jr / Pro', file: 'QUARTER_JR_PRO.md' },
-  { id: 'engine',      label: 'Engine Jr / Pro', file: 'ENGINE_JR_PRO.md' },
   { id: 'faq',         label: 'FAQ & Troubleshooting', file: 'FAQ_TROUBLESHOOTING.md' },
 ];
 

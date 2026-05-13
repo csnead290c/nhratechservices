@@ -3,17 +3,17 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import Help from '../../pages/Help';
 
-const QUICK_START_MD = `# RSA Quick Start Guide
+const QUICK_START_MD = `# NHRATS Quick Start Guide
 
-Welcome to **Racing Systems Analysis (RSA)**.
+Welcome to **NHRA Tech Services**.
 
-## 1. Create an Account / Sign In
+## 1. Sign In
 
 Click **Sign In** on the home page.
 
-## 2. Create Your First Vehicle
+## 2. Navigate to Your Module
 
-Vehicles are the foundation of every Quarter simulation.
+Use the navigation bar to access Parity, Tech Master, or Rules.
 `;
 
 const QUARTER_MD = `# Quarter Jr / Quarter Pro — User Manual
@@ -38,7 +38,7 @@ describe('Help Center', () => {
           lastUpdatedIso: '2025-02-23T12:00:00.000Z',
           lastUpdatedDate: '2025-02-23',
           source: 'docs/manuals',
-          files: ['SITE_QUICK_START.md', 'QUARTER_JR_PRO.md', 'ENGINE_JR_PRO.md', 'FAQ_TROUBLESHOOTING.md'],
+          files: ['SITE_QUICK_START.md', 'FAQ_TROUBLESHOOTING.md'],
         };
         return Promise.resolve(new Response(JSON.stringify(manifest), { status: 200 }));
       }
@@ -65,41 +65,29 @@ describe('Help Center', () => {
       </MemoryRouter>,
     );
 
-    // Sidebar nav should be visible
+    // Sidebar nav should show only Quick Start and FAQ — no RSA simulator manuals
     expect(screen.getByTestId('help-nav-quick-start')).toBeInTheDocument();
-    expect(screen.getByTestId('help-nav-quarter')).toBeInTheDocument();
-    expect(screen.getByTestId('help-nav-engine')).toBeInTheDocument();
     expect(screen.getByTestId('help-nav-faq')).toBeInTheDocument();
+    expect(screen.queryByTestId('help-nav-quarter')).toBeNull();
+    expect(screen.queryByTestId('help-nav-engine')).toBeNull();
 
-    // Quick Start content should load (may appear in both content and TOC)
+    // Quick Start content should load
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
   });
 
-  it('loads Quarter manual when navigating to /help?doc=quarter', async () => {
+  it('unknown doc param falls back to Quick Start', async () => {
     render(
       <MemoryRouter initialEntries={['/help?doc=quarter']}>
         <Help />
       </MemoryRouter>,
     );
 
+    // quarter is no longer a valid doc ID — should fall back to default (quick-start)
     await waitFor(() => {
-      const headings = screen.getAllByText(/Quarter Jr \/ Quarter Pro/);
-      expect(headings.length).toBeGreaterThan(0);
-    });
-  });
-
-  it('loads Engine manual when navigating to /help?doc=engine', async () => {
-    render(
-      <MemoryRouter initialEntries={['/help?doc=engine']}>
-        <Help />
-      </MemoryRouter>,
-    );
-
-    await waitFor(() => {
-      const headings = screen.getAllByText(/Engine Jr \/ Engine Pro/);
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
   });
@@ -126,16 +114,16 @@ describe('Help Center', () => {
     );
 
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
 
     // Check for a known section heading (appears in content and TOC)
-    expect(screen.getAllByText('1. Create an Account / Sign In').length).toBeGreaterThan(0);
-    expect(screen.getAllByText('2. Create Your First Vehicle').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('1. Sign In').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2. Navigate to Your Module').length).toBeGreaterThan(0);
   });
 
-  it('switches to Quarter manual when nav is clicked', async () => {
+  it('switches to FAQ manual when nav is clicked', async () => {
     render(
       <MemoryRouter initialEntries={['/help']}>
         <Help />
@@ -144,36 +132,31 @@ describe('Help Center', () => {
 
     // Wait for initial load
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
 
-    // Click Quarter nav
-    fireEvent.click(screen.getByTestId('help-nav-quarter'));
+    // Click FAQ nav
+    fireEvent.click(screen.getByTestId('help-nav-faq'));
 
     await waitFor(() => {
-      const headings = screen.getAllByText(/Quarter Jr \/ Quarter Pro/);
+      const headings = screen.getAllByText(/FAQ/);
       expect(headings.length).toBeGreaterThan(0);
     });
   });
 
   it('renders tables from markdown (GFM support)', async () => {
+    // Switch to FAQ which contains a table of contents
     render(
-      <MemoryRouter initialEntries={['/help']}>
+      <MemoryRouter initialEntries={['/help?doc=faq']}>
         <Help />
       </MemoryRouter>,
     );
 
-    // Switch to Quarter manual which has a table
-    fireEvent.click(screen.getByTestId('help-nav-quarter'));
-
     await waitFor(() => {
-      expect(screen.getByText('Quarter Jr')).toBeInTheDocument();
+      const headings = screen.getAllByText(/FAQ/);
+      expect(headings.length).toBeGreaterThan(0);
     });
-
-    // Table should render with th/td elements
-    const tables = document.querySelectorAll('table');
-    expect(tables.length).toBeGreaterThan(0);
   });
 
   it('does not expose internal/hidden module links in nav', () => {
@@ -202,18 +185,18 @@ describe('Help Center', () => {
     );
 
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
 
     // Check that content headings (h1/h2 elements) have id attributes for anchor linking
-    const h1Elements = screen.getAllByText('RSA Quick Start Guide');
+    const h1Elements = screen.getAllByText('NHRATS Quick Start Guide');
     const h1 = h1Elements.find(el => el.tagName === 'H1');
-    expect(h1?.id).toBe('rsa-quick-start-guide');
+    expect(h1?.id).toBe('nhrats-quick-start-guide');
 
-    const h2Elements = screen.getAllByText('1. Create an Account / Sign In');
+    const h2Elements = screen.getAllByText('1. Sign In');
     const h2 = h2Elements.find(el => el.tagName === 'H2');
-    expect(h2?.id).toBe('1-create-an-account-sign-in');
+    expect(h2?.id).toBe('1-sign-in');
   });
 
   it('renders TOC with links to section anchors', async () => {
@@ -224,7 +207,7 @@ describe('Help Center', () => {
     );
 
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
 
@@ -239,11 +222,11 @@ describe('Help Center', () => {
     // Verify links point to correct hash anchors
     const firstLink = tocLinks[0] as HTMLAnchorElement;
     expect(firstLink.href).toContain('#');
-    
+
     // Check that a known heading appears in TOC
     const tocLinkTexts = Array.from(tocLinks).map(link => link.textContent);
-    expect(tocLinkTexts).toContain('RSA Quick Start Guide');
-    expect(tocLinkTexts).toContain('1. Create an Account / Sign In');
+    expect(tocLinkTexts).toContain('NHRATS Quick Start Guide');
+    expect(tocLinkTexts).toContain('1. Sign In');
   });
 
   it('displays last updated date from manifest', async () => {
@@ -255,7 +238,7 @@ describe('Help Center', () => {
 
     // Wait for content to load
     await waitFor(() => {
-      const headings = screen.getAllByText('RSA Quick Start Guide');
+      const headings = screen.getAllByText('NHRATS Quick Start Guide');
       expect(headings.length).toBeGreaterThan(0);
     });
 
@@ -263,6 +246,19 @@ describe('Help Center', () => {
     await waitFor(() => {
       expect(screen.getByText(/Last updated: 2025-02-23/)).toBeInTheDocument();
     });
+  });
+
+  it('help nav does not show Quarter Jr/Pro or Engine Jr/Pro links', () => {
+    render(
+      <MemoryRouter initialEntries={['/help']}>
+        <Help />
+      </MemoryRouter>,
+    );
+
+    expect(screen.queryByTestId('help-nav-quarter')).toBeNull();
+    expect(screen.queryByTestId('help-nav-engine')).toBeNull();
+    expect(screen.queryByText(/Quarter Jr/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Engine Jr/i)).not.toBeInTheDocument();
   });
 
 });

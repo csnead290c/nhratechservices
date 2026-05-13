@@ -125,6 +125,12 @@ jobs:
           echo "Deploying to SiteGround via SSH/rsync..."
           rsync -avz \
             --exclude 'api/config.php' \
+            --exclude 'rsa-icon.png' \
+            --exclude 'rsa-logo.png' \
+            --exclude 'test-*.html' \
+            --exclude 'vb6/' \
+            --exclude 'manuals/QUARTER_JR_PRO.md' \
+            --exclude 'manuals/ENGINE_JR_PRO.md' \
             -e "ssh -i ~/.ssh/siteground_deploy_key -p ${{ secrets.SITEGROUND_SSH_PORT }} -o StrictHostKeyChecking=yes" \
             dist/ \
             "${{ secrets.SITEGROUND_SSH_USER }}@${{ secrets.SITEGROUND_SSH_HOST }}:/home/customer/www/nhratechservices.com/public_html/"
