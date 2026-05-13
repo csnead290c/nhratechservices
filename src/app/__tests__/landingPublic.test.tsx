@@ -8,38 +8,34 @@ describe('Landing page (logged-out)', () => {
     window.history.pushState({}, '', '/');
   });
 
-  it('does not show testimonials section', async () => {
+  it('shows NHRA Tech Services branding', async () => {
     render(<App />);
-
-    // Wait for the landing page to render
-    await screen.findByText('Turn On More Win Lights!');
-
-    // Testimonials section was removed — verify no testimonial content
-    expect(screen.queryByText(/deadly consistent and turning on more win lights/i)).toBeNull();
-    expect(screen.queryByText(/Bracket Racer, Super Pro Class/i)).toBeNull();
+    await screen.findByTestId('nhrats-landing');
+    expect(screen.getByText('NHRA Tech Services')).toBeInTheDocument();
   });
 
-  it('does not promote internal-only features', async () => {
+  it('shows Sign In link', async () => {
     render(<App />);
-
-    await screen.findByText('Turn On More Win Lights!');
-
-    // Internal features should not appear anywhere on the landing page
-    expect(screen.queryByText('Run Logbook')).toBeNull();
-    expect(screen.queryByText('AI Opponent Prediction')).toBeNull();
-    expect(screen.queryByText('Race Day Dashboard')).toBeNull();
-    expect(screen.queryByText(/Team Collaboration/i)).toBeNull();
-    expect(screen.queryByText(/Opponent/i)).toBeNull();
+    await screen.findByTestId('nhrats-landing');
+    const signInLinks = screen.getAllByRole('link', { name: /sign in/i });
+    expect(signInLinks.length).toBeGreaterThan(0);
   });
 
-  it('promotes public features', async () => {
+  it('does NOT show RSA racer content', async () => {
     render(<App />);
+    await screen.findByTestId('nhrats-landing');
+    expect(screen.queryByText(/Quarter Jr/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Engine Jr/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Turn On More Win Lights/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/race team/i)).not.toBeInTheDocument();
+  });
 
-    await screen.findByText('Turn On More Win Lights!');
-
-    // Public features should be present
-    expect(screen.getByText('Quarter Jr/Pro')).toBeInTheDocument();
-    expect(screen.getByText('Engine Jr/Pro')).toBeInTheDocument();
-    expect(screen.getByText('Coming Soon!')).toBeInTheDocument();
+  it('does NOT show subscription pricing content', async () => {
+    render(<App />);
+    await screen.findByTestId('nhrats-landing');
+    expect(screen.queryByText(/\$9\.99/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\$24\.99/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Racer/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Most Popular/i)).not.toBeInTheDocument();
   });
 });
