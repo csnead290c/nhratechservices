@@ -188,29 +188,87 @@ All of the following routes now render the `NotFound` page instead of RSA conten
 
 ---
 
+## GitHub Actions Workflow Failure and Fix
+
+### Initial Failure (commit `5031a1d`)
+
+- **Build:** ✅ passed
+- **rsync:** ✅ completed successfully
+- **Post-deploy verification:** ✗ FAILED — "Could not find asset in production"
+
+**Root cause (diagnosed):** The production curl step used `-s` (silent) without `-L` (follow redirects). If the server issues a redirect (e.g. `http://` → `https://`, `nhratechservices.com` → `www.`), curl received a redirect response body rather than the actual SPA HTML. That body contained no `assets/index-*.js` reference, so the regex failed to match.
+
+Additional contributing factors:
+- Regex `/\/assets\/index-[^"']+\.js/` requires a leading `/` — if a CDN or server strips the leading slash in the HTML, this silently fails
+- No diagnostic output on failure — impossible to distinguish redirect body / cached stale page / wrong document root without inspection
+
+**Workflow fix (commit `252917d`):**
+
+| Step | What it does |
+|------|-------------|
+| Step 1 | Extract expected asset from `dist/index.html` with robust regex, normalize to `assets/index-*.js` |
+| Step 2 | SSH into server, read `index.html` directly, compare with dist asset — detects rsync failure or wrong deploy path independent of HTTP |
+| Step 3 | Write `deploy-check.txt` with commit SHA, rsync it, curl it back — confirms document root is `public_html/` and site is not behind a different root |
+| Step 4 | Full diagnostic curl: `-sSL` (follows redirects), no-cache headers, saves headers + body; prints HTTP status, byte size, head-40, content checks, src/href refs |
+| Step 5 | Robust production asset extraction: accepts `/assets/`, `assets/`, or full-URL prefixed refs; normalizes to `assets/index-*.js` |
+| Step 6 | Three-way comparison: dist vs production vs SSH remote, with context on any mismatch |
+| Step 7 | Branding checks (unchanged logic, same thresholds) |
+
+Sleep increased from 10s → 15s.
+
+### Workflow Fix Commit
+
+| Hash | Description |
+|------|-------------|
+| `252917d` | fix(deploy): robust post-deploy verification with diagnostics |
+
+---
+
 ## Production Verification Checklist
 
-After deploy completes:
+*To be confirmed after GitHub Actions completes on commit `252917d`:*
 
+- [ ] Workflow conclusion = success (green)
+- [ ] `deploy-check.txt` returns correct SHA (document root confirmed)
+- [ ] Expected asset = production asset (asset hash match)
+- [ ] Production asset URL returns 200
 - [ ] `/` loads NHRATS home with no RSA/Simulator/Vehicle references
-- [ ] `/rules` loads without console 500s
-- [ ] `/rules/committees` loads without console 500s
-- [ ] `/parity` works when authenticated
-- [ ] `/vehicles` → NotFound (no RSA vehicles page)
-- [ ] `/et-sim` → NotFound
-- [ ] `/engine-sim` → NotFound
+- [ ] `/vehicles` → NotFound (not Vehicle Manager)
+- [ ] `/et-sim` → NotFound (not ET Sim)
+- [ ] `/engine-sim` → NotFound (not Engine Sim)
+- [ ] `/parity` works when authenticated, no API 500s
+- [ ] `/rules` no API 500s
+- [ ] `/rules/committees` no API 500s
 - [ ] Favicon in browser tab uses NHRA branding
 - [ ] PWA install metadata uses NHRA name/icon
 - [ ] `api/config.php` preserved
 
 ---
 
-## NHRATS Shell Cleanup Complete?
+## Part 8 — Follow-up: Legacy Files in Production Deploy
 
-**YES — Shell cleanup is complete.**
+rsync currently deploys all of `dist/` including static files that are no longer needed or referenced. These are **not blocking** but should be cleaned up in a future sprint:
 
-All RSA-specific routes are blocked, navigation shows only NHRA tools, the landing page is NHRATS-branded, the manifest is corrected, and test coverage covers all blocked routes and nav changes. RSA page/component files are preserved in the repo per safety rules.
+| File | Status | Recommended action |
+|------|--------|--------------------|
+| `public/rsa-icon.png` | Deployed, not referenced in manifest | Remove from public/ when confirmed safe |
+| `public/rsa-logo.png` | Deployed, not referenced in manifest | Remove from public/ when confirmed safe |
+| `public/test-engine*.html` | Legacy test HTML files | Add `--exclude 'test-*.html'` to rsync |
+| `public/test-vb6*.html` | Legacy test HTML files | Add `--exclude 'test-*.html'` to rsync |
+| `dist/deploy-check.txt` | Written each deploy run | Acceptable to leave; is overwritten each run |
+
+**Safety note:** Do not use `--delete` in rsync. Add targeted `--exclude` patterns only.
 
 ---
 
-*Generated: May 13, 2026*
+## NHRATS Shell Cleanup Complete?
+
+**Shell cleanup code is complete. Production verification pending workflow re-run on `252917d`.**
+
+All RSA-specific routes are blocked, navigation shows only NHRA tools, the landing page is NHRATS-branded, the manifest is corrected, and 156 total tests cover all blocked routes and nav changes. RSA page/component files are preserved per safety rules.
+
+Workflow verification fix has been pushed and is running. Production confirmation requires the GitHub Actions run on `252917d` to complete green.
+
+---
+
+*Updated: May 13, 2026*
