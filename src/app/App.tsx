@@ -33,6 +33,9 @@ const RulesList = lazy(() => import('../pages/RulesList'));
 const RuleDetail = lazy(() => import('../pages/RuleDetail'));
 const RulesCommitteesList = lazy(() => import('../pages/RulesCommitteesList'));
 const RulesCommitteeDetail = lazy(() => import('../pages/RulesCommitteeDetail'));
+const EventOpsList = lazy(() => import('../pages/EventOpsList'));
+const EventPlanDetail = lazy(() => import('../pages/EventPlanDetail'));
+const EventPrePlanEditor = lazy(() => import('../pages/EventPrePlanEditor'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -186,6 +189,7 @@ function Navigation() {
   const canAccessParity = isLoggedIn && can('nhra.parity');
   const canAccessTechMaster = isLoggedIn && can('nhra.tech.read');
   const canAccessRules = isLoggedIn && can('rules.read');
+  const canAccessEventOps = isLoggedIn && can('eventops.read');
 
   const close = useCallback(() => setMenuOpen(false), []);
 
@@ -202,6 +206,9 @@ function Navigation() {
       )}
       {canAccessRules && (
         <Link to="/rules" style={navLinkStyle(isActive('/rules'))} onClick={close}>Rules</Link>
+      )}
+      {canAccessEventOps && (
+        <Link to="/event-ops" style={navLinkStyle(isActive('/event-ops'))} onClick={close}>Event Ops</Link>
       )}
     </>
   );
@@ -365,6 +372,7 @@ const NHRA_ALLOWED_PREFIXES = [
   '/parity',
   '/tech',
   '/rules',
+  '/event-ops',
   '/admin',
   '/dev',
   '/account',
@@ -572,6 +580,29 @@ function App() {
               <CapabilityRoute requireCap="committees.read">
                 <Suspense fallback={<div style={{ padding: "2rem", textAlign: "center" }}>Loading...</div>}>
                   <RulesCommitteesList />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+
+            {/* Event Operations routes */}
+            <Route path="/event-ops" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventOpsList />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/event-ops/:id" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventPlanDetail />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/event-ops/:id/pre-plan" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventPrePlanEditor />
                 </Suspense>
               </CapabilityRoute>
             } />

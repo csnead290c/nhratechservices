@@ -221,6 +221,10 @@ export const CAPABILITY_KEYS = [
   'rules.admin',                 // Create/edit/publish rules
   'committees.read',             // View committees
   'committees.admin',            // Manage committees and memberships
+
+  // ── Event Operations ──
+  'eventops.read',               // View event plans (nhra plan, owner, admin)
+  'eventops.admin',              // Create/edit/delete event plans (owner/admin only)
 ] as const;
 
 export type Capability = typeof CAPABILITY_KEYS[number];
@@ -427,6 +431,7 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
     'incidents.read',
     'incidents.create',
     'incidents.edit.own',
+    'eventops.read',
   ]),
 };
 
@@ -436,8 +441,8 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
 
 /** Capabilities granted by role regardless of plan (owner/admin get admin tools). */
 export const ROLE_CAPABILITIES: Record<RoleId, ReadonlySet<Capability>> = {
-  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all']),
-  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all']),
+  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
+  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
   member: new Set<Capability>([]),
   viewer: new Set<Capability>([]),
 };

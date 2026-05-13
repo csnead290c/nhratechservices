@@ -132,13 +132,14 @@ const PLAN_CAPABILITIES = [
         'incidents.read',
         'incidents.create',
         'incidents.edit.own',
+        'eventops.read',
     ],
 ];
 
 // Role-based capabilities (independent of subscription plan)
 const ROLE_CAPABILITIES = [
-    'owner' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
-    'admin' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all'],
+    'owner' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all', 'eventops.read', 'eventops.admin'],
+    'admin' => ['admin.devTools', 'admin.userManagement', 'admin.access', 'nhra.parity', 'nhra.parity.admin', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.read', 'incidents.create', 'incidents.edit.own', 'incidents.edit.all', 'eventops.read', 'eventops.admin'],
     'beta'  => ['admin.devTools'],
 ];
 
