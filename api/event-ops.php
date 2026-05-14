@@ -539,16 +539,359 @@ function eo_deleteFile(PDO $pdo, int $userId, string $role): void {
     rsa_jsonResponse(['success' => true]);
 }
 
+// ── Live Checklist helpers ──────────────────────────────────────────────────
+
+/** Status values valid for live checklist, sessions, and task updates */
+const LIVE_STATUSES = ['not_started','in_progress','complete','issue_found','skipped','blocked','not_applicable'];
+
+/**
+ * Lazily get or create the single live checklist record for a plan.
+ * Returns the row (always). Creates with status=not_started if absent.
+ */
+function eo_getOrCreateChecklist(PDO $pdo, int $planId, int $userId): array {
+    $stmt = $pdo->prepare("SELECT * FROM event_live_checklists WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1");
+    $stmt->execute([$planId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
+
+    $uuid = eo_newUuid();
+    $pdo->prepare("INSERT INTO event_live_checklists (uuid, event_plan_id, status, created_by) VALUES (?, ?, 'not_started', ?)")
+        ->execute([$uuid, $planId, $userId]);
+    $id = $pdo->lastInsertId();
+    $stmt = $pdo->prepare("SELECT * FROM event_live_checklists WHERE id = ?");
+    $stmt->execute([$id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Validate that a task belongs to the given plan.
+ */
+function eo_validateTaskBelongsToPlan(PDO $pdo, int $taskId, int $planId): array {
+    $stmt = $pdo->prepare("SELECT id, session_id FROM event_plan_tasks WHERE id = ? AND event_plan_id = ? AND deleted_at IS NULL");
+    $stmt->execute([$taskId, $planId]);
+    $task = $stmt->fetch(PDO::FETCH_ASSOC);
+    if (!$task) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Task not found or does not belong to this plan']);
+        exit;
+    }
+    return $task;
+}
+
+/**
+ * Validate that a session belongs to the given plan.
+ */
+function eo_validateSessionBelongsToPlan(PDO $pdo, int $sessionId, int $planId): void {
+    $stmt = $pdo->prepare("SELECT id FROM event_plan_sessions WHERE id = ? AND event_plan_id = ? AND deleted_at IS NULL");
+    $stmt->execute([$sessionId, $planId]);
+    if (!$stmt->fetch()) {
+        http_response_code(404);
+        echo json_encode(['error' => 'Session not found or does not belong to this plan']);
+        exit;
+    }
+}
+
+/**
+ * Get or create a task update record for a given task+plan.
+ */
+function eo_getOrCreateTaskUpdate(PDO $pdo, int $planId, int $taskId, ?int $sessionId, int $userId): array {
+    $stmt = $pdo->prepare("SELECT * FROM event_live_task_updates WHERE task_id = ? AND event_plan_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1");
+    $stmt->execute([$taskId, $planId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
+
+    $uuid = eo_newUuid();
+    $pdo->prepare("INSERT INTO event_live_task_updates (uuid, event_plan_id, task_id, session_id, status, updated_by) VALUES (?,?,?,?,'not_started',?)")
+        ->execute([$uuid, $planId, $taskId, $sessionId, $userId]);
+    $id = $pdo->lastInsertId();
+    $stmt = $pdo->prepare("SELECT * FROM event_live_task_updates WHERE id = ?");
+    $stmt->execute([$id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+/**
+ * Get or create a session status record.
+ */
+function eo_getOrCreateSessionStatus(PDO $pdo, int $planId, int $sessionId, int $userId): array {
+    $stmt = $pdo->prepare("SELECT * FROM event_live_session_status WHERE session_id = ? AND event_plan_id = ? AND deleted_at IS NULL ORDER BY id DESC LIMIT 1");
+    $stmt->execute([$sessionId, $planId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    if ($row) return $row;
+
+    $pdo->prepare("INSERT INTO event_live_session_status (event_plan_id, session_id, status, updated_by) VALUES (?,?,'not_started',?)")
+        ->execute([$planId, $sessionId, $userId]);
+    $id = $pdo->lastInsertId();
+    $stmt = $pdo->prepare("SELECT * FROM event_live_session_status WHERE id = ?");
+    $stmt->execute([$id]);
+    return $stmt->fetch(PDO::FETCH_ASSOC);
+}
+
+// ── Live Checklist read actions ─────────────────────────────────────────────
+
+function eo_getLiveChecklist(PDO $pdo, int $userId, string $role): void {
+    eo_requireRead($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $checklist = eo_getOrCreateChecklist($pdo, $planId, $userId);
+    rsa_jsonResponse(['checklist' => $checklist]);
+}
+
+function eo_listLiveSessionStatus(PDO $pdo, int $userId, string $role): void {
+    eo_requireRead($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    eo_getPlanOrFail($pdo, $planId);
+
+    $sessions = $pdo->prepare("SELECT * FROM event_plan_sessions WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC");
+    $sessions->execute([$planId]);
+    $sessionRows = $sessions->fetchAll(PDO::FETCH_ASSOC);
+
+    $statuses = $pdo->prepare("SELECT * FROM event_live_session_status WHERE event_plan_id = ? AND deleted_at IS NULL");
+    $statuses->execute([$planId]);
+    $statusMap = [];
+    foreach ($statuses->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $statusMap[$row['session_id']] = $row;
+    }
+
+    foreach ($sessionRows as &$s) {
+        $s['live_status'] = $statusMap[$s['id']] ?? null;
+    }
+    unset($s);
+
+    rsa_jsonResponse(['sessions' => $sessionRows]);
+}
+
+function eo_listLiveTaskUpdates(PDO $pdo, int $userId, string $role): void {
+    eo_requireRead($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    eo_getPlanOrFail($pdo, $planId);
+
+    $tasks = $pdo->prepare("SELECT * FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order ASC");
+    $tasks->execute([$planId]);
+    $taskRows = $tasks->fetchAll(PDO::FETCH_ASSOC);
+
+    $updates = $pdo->prepare("SELECT * FROM event_live_task_updates WHERE event_plan_id = ? AND deleted_at IS NULL");
+    $updates->execute([$planId]);
+    $updateMap = [];
+    foreach ($updates->fetchAll(PDO::FETCH_ASSOC) as $row) {
+        $updateMap[$row['task_id']] = $row;
+    }
+
+    foreach ($taskRows as &$t) {
+        $t['live_update'] = $updateMap[$t['id']] ?? null;
+    }
+    unset($t);
+
+    rsa_jsonResponse(['tasks' => $taskRows]);
+}
+
+function eo_getLiveTaskSummary(PDO $pdo, int $userId, string $role): void {
+    eo_requireRead($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    eo_getPlanOrFail($pdo, $planId);
+
+    $total = (int) $pdo->prepare("SELECT COUNT(*) FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL")->execute([$planId]) ?: 0;
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL");
+    $stmt->execute([$planId]);
+    $total = (int) $stmt->fetchColumn();
+
+    $stmt2 = $pdo->prepare("SELECT status, COUNT(*) AS cnt FROM event_live_task_updates WHERE event_plan_id = ? AND deleted_at IS NULL GROUP BY status");
+    $stmt2->execute([$planId]);
+    $byStatus = [];
+    foreach ($stmt2->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $byStatus[$r['status']] = (int) $r['cnt'];
+    }
+
+    $stmt3 = $pdo->prepare("SELECT SUM(followup_required) AS fu, SUM(carry_forward) AS cf, SUM(issue_found) AS iss FROM event_live_task_updates WHERE event_plan_id = ? AND deleted_at IS NULL");
+    $stmt3->execute([$planId]);
+    $flags = $stmt3->fetch(PDO::FETCH_ASSOC);
+
+    rsa_jsonResponse([
+        'summary' => [
+            'total'              => $total,
+            'by_status'          => $byStatus,
+            'complete'           => $byStatus['complete'] ?? 0,
+            'open'               => $byStatus['not_started'] ?? $total,
+            'in_progress'        => $byStatus['in_progress'] ?? 0,
+            'issue_found'        => (int) ($flags['iss'] ?? 0),
+            'followup_required'  => (int) ($flags['fu'] ?? 0),
+            'carry_forward'      => (int) ($flags['cf'] ?? 0),
+        ],
+    ]);
+}
+
+// ── Live Checklist admin actions ────────────────────────────────────────────
+
+function eo_startLiveChecklist(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $checklist = eo_getOrCreateChecklist($pdo, $planId, $userId);
+    $pdo->prepare("UPDATE event_live_checklists SET status='in_progress', started_at=NOW() WHERE id=?")->execute([$checklist['id']]);
+    rsa_jsonResponse(['success' => true, 'checklist_id' => $checklist['id']]);
+}
+
+function eo_updateLiveChecklistStatus(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $status = eo_strParam('status');
+    eo_validateEnum($status, LIVE_STATUSES, 'status');
+    eo_getPlanOrFail($pdo, $planId);
+    $checklist = eo_getOrCreateChecklist($pdo, $planId, $userId);
+    $completedAt = $status === 'complete' ? date('Y-m-d H:i:s') : null;
+    $pdo->prepare("UPDATE event_live_checklists SET status=?, completed_at=? WHERE id=?")->execute([$status, $completedAt, $checklist['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_startSession(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId    = eo_intParam('plan_id');
+    $sessionId = eo_intParam('session_id');
+    eo_getPlanOrFail($pdo, $planId);
+    eo_validateSessionBelongsToPlan($pdo, $sessionId, $planId);
+    $rec = eo_getOrCreateSessionStatus($pdo, $planId, $sessionId, $userId);
+    $pdo->prepare("UPDATE event_live_session_status SET status='in_progress', started_at=NOW(), updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    $checklist = eo_getOrCreateChecklist($pdo, $planId, $userId);
+    $pdo->prepare("UPDATE event_live_checklists SET active_session_id=? WHERE id=?")->execute([$sessionId, $checklist['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_completeSession(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId    = eo_intParam('plan_id');
+    $sessionId = eo_intParam('session_id');
+    eo_getPlanOrFail($pdo, $planId);
+    eo_validateSessionBelongsToPlan($pdo, $sessionId, $planId);
+    $rec = eo_getOrCreateSessionStatus($pdo, $planId, $sessionId, $userId);
+    $pdo->prepare("UPDATE event_live_session_status SET status='complete', completed_at=NOW(), updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_updateSessionStatus(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId    = eo_intParam('plan_id');
+    $sessionId = eo_intParam('session_id');
+    $b         = eo_body();
+    $status    = trim($b['status'] ?? '');
+    $notes     = trim($b['notes'] ?? '');
+    eo_validateEnum($status, LIVE_STATUSES, 'status');
+    eo_getPlanOrFail($pdo, $planId);
+    eo_validateSessionBelongsToPlan($pdo, $sessionId, $planId);
+    $rec = eo_getOrCreateSessionStatus($pdo, $planId, $sessionId, $userId);
+    $startedAt   = ($status === 'in_progress' && !$rec['started_at']) ? date('Y-m-d H:i:s') : $rec['started_at'];
+    $completedAt = $status === 'complete' ? date('Y-m-d H:i:s') : $rec['completed_at'];
+    $pdo->prepare("UPDATE event_live_session_status SET status=?, started_at=?, completed_at=?, notes=?, updated_by=? WHERE id=?")
+        ->execute([$status, $startedAt, $completedAt, $notes ?: null, $userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_updateTaskStatus(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    $b      = eo_body();
+    $status = trim($b['status'] ?? '');
+    eo_validateEnum($status, LIVE_STATUSES, 'status');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+
+    $completedAt = in_array($status, ['complete','issue_found'], true) ? date('Y-m-d H:i:s') : null;
+    $issueFound  = $status === 'issue_found' ? 1 : (int) $rec['issue_found'];
+    $result      = trim($b['result'] ?? $rec['result'] ?? '');
+    $pdo->prepare("UPDATE event_live_task_updates SET status=?, completed_at=?, completed_by=?, issue_found=?, result=?, updated_by=? WHERE id=?")
+        ->execute([$status, $completedAt, $completedAt ? $userId : null, $issueFound, $result ?: null, $userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_addTaskNote(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    $notes  = eo_strParam('notes');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $pdo->prepare("UPDATE event_live_task_updates SET notes=?, updated_by=? WHERE id=?")->execute([$notes, $userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_addTaskFileReference(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    $b      = eo_body();
+    $title  = trim($b['title'] ?? '');
+    if (!$title) { http_response_code(400); echo json_encode(['error' => 'title required']); exit; }
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $fileType = trim($b['file_type'] ?? 'other');
+    $url      = trim($b['url'] ?? '') ?: null;
+    $notes    = trim($b['notes'] ?? '') ?: null;
+    $pdo->prepare("INSERT INTO event_live_task_files (task_update_id, file_type, title, url, notes, created_by) VALUES (?,?,?,?,?,?)")
+        ->execute([$rec['id'], $fileType, $title, $url, $notes, $userId]);
+    rsa_jsonResponse(['success' => true, 'file_id' => (int) $pdo->lastInsertId()]);
+}
+
+function eo_markTaskFollowupRequired(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $pdo->prepare("UPDATE event_live_task_updates SET followup_required=1, updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_markTaskCarryForward(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $pdo->prepare("UPDATE event_live_task_updates SET carry_forward=1, updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_clearTaskFollowup(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $pdo->prepare("UPDATE event_live_task_updates SET followup_required=0, updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
+function eo_clearTaskCarryForward(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $planId = eo_intParam('plan_id');
+    $taskId = eo_intParam('task_id');
+    eo_getPlanOrFail($pdo, $planId);
+    $task = eo_validateTaskBelongsToPlan($pdo, $taskId, $planId);
+    $rec  = eo_getOrCreateTaskUpdate($pdo, $planId, $taskId, $task['session_id'] ?? null, $userId);
+    $pdo->prepare("UPDATE event_live_task_updates SET carry_forward=0, updated_by=? WHERE id=?")->execute([$userId, $rec['id']]);
+    rsa_jsonResponse(['success' => true]);
+}
+
 // ── Router ─────────────────────────────────────────────────────────────────
 
 $readActions = [
-    'listPlans'       => 'eo_listPlans',
-    'getPlan'         => 'eo_getPlan',
-    'getPlanStaff'    => 'eo_getPlanStaff',
-    'getPlanSections' => 'eo_getPlanSections',
-    'getPlanSessions' => 'eo_getPlanSessions',
-    'getPlanTasks'    => 'eo_getPlanTasks',
-    'getPlanFiles'    => 'eo_getPlanFiles',
+    'listPlans'            => 'eo_listPlans',
+    'getPlan'              => 'eo_getPlan',
+    'getPlanStaff'         => 'eo_getPlanStaff',
+    'getPlanSections'      => 'eo_getPlanSections',
+    'getPlanSessions'      => 'eo_getPlanSessions',
+    'getPlanTasks'         => 'eo_getPlanTasks',
+    'getPlanFiles'         => 'eo_getPlanFiles',
+    // v38 live checklist reads
+    'getLiveChecklist'     => 'eo_getLiveChecklist',
+    'listLiveSessionStatus'=> 'eo_listLiveSessionStatus',
+    'listLiveTaskUpdates'  => 'eo_listLiveTaskUpdates',
+    'getLiveTaskSummary'   => 'eo_getLiveTaskSummary',
 ];
 
 $adminActions = [
@@ -571,9 +914,22 @@ $adminActions = [
     'deleteTask'           => 'eo_deleteTask',
     'addTaskTarget'        => 'eo_addTaskTarget',
     'deleteTaskTarget'     => 'eo_deleteTaskTarget',
-    'addFile'              => 'eo_addFile',
-    'updateFile'           => 'eo_updateFile',
-    'deleteFile'           => 'eo_deleteFile',
+    'addFile'                   => 'eo_addFile',
+    'updateFile'                => 'eo_updateFile',
+    'deleteFile'                => 'eo_deleteFile',
+    // v38 live checklist writes
+    'startLiveChecklist'        => 'eo_startLiveChecklist',
+    'updateLiveChecklistStatus' => 'eo_updateLiveChecklistStatus',
+    'startSession'              => 'eo_startSession',
+    'completeSession'           => 'eo_completeSession',
+    'updateSessionStatus'       => 'eo_updateSessionStatus',
+    'updateTaskStatus'          => 'eo_updateTaskStatus',
+    'addTaskNote'               => 'eo_addTaskNote',
+    'addTaskFileReference'      => 'eo_addTaskFileReference',
+    'markTaskFollowupRequired'  => 'eo_markTaskFollowupRequired',
+    'markTaskCarryForward'      => 'eo_markTaskCarryForward',
+    'clearTaskFollowup'         => 'eo_clearTaskFollowup',
+    'clearTaskCarryForward'     => 'eo_clearTaskCarryForward',
 ];
 
 if (isset($readActions[$action])) {
