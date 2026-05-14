@@ -29,5 +29,56 @@ src/domain/physics/_legacy/archive/
 uploads/
 
 # reference artifacts (local only)
-Reference Files/**/*.log
-Reference Files/**/.DS_Store
+Reference Files/
+Logo Files/
+
+# test artifacts
+test-results/
+playwright-report/
+test-results.json
+test-results.txt
+test-launch-output.txt
+test-output.txt
+build-log.txt
+build-output.txt
+benchmark-results.md
+
+# loose test/debug scripts
+test-*.ts
+test-*.js
+test-*.mjs
+test_*.js
+verify-*.html
+verify-*.mjs
+
+# Python / Flask artifacts
+__pycache__/
+*.pyc
+poetry.lock
+static/
+
+# session/audit notes (dev only)
+VB6-*.md
+AUDIT*.md
+ARCHIVE*.md
+SESSION-*.md
+ROLLOUT-*.md
+CLUTCH-*.md
+CONVERTER-*.md
+CRITICAL_*.md
+DYNO_*.md
+ENERGY-*.md
+ENGINE_*.md
+ENGINE_SIM*.md
+ENHANCED-*.md
+FLOW_*.md
+FUEL-*.md
+K-FACTOR-*.md
+LAP_SIM*.md
+PARITY_SMOKE*.md
+PHYSICS_*.md
+PREDICT_*.md
+TEST_STATUS*.md
+WINDOW-*.md
+VB6_vs_TS*.md
+ADMIN_VERIFICATION*.md

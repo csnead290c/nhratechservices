@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 import { lazy, useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { ThemeProvider } from '../shared/ui/theme';
+import { ThemeProvider, useTheme } from '../shared/ui/theme';
 import { Vb6FixtureProvider } from '../shared/state/vb6FixtureStore';
 import { FlagsProvider } from '../domain/flags/store.tsx';
 import { VehicleProvider } from '../state/vehicleStore';
@@ -167,15 +167,17 @@ function Navigation() {
   const isActive = (path: string) => location.pathname === path;
 
   const navLinkStyle = (active: boolean): React.CSSProperties => ({
-    color: 'var(--color-header-text)',
+    color: '#ffffff',
     textDecoration: 'none',
-    padding: '6px 10px',
+    padding: '6px 14px',
     borderRadius: 'var(--radius-sm)',
-    backgroundColor: active ? 'rgba(255, 255, 255, 0.12)' : 'transparent',
+    backgroundColor: active ? 'rgba(255, 255, 255, 0.15)' : 'transparent',
     transition: 'background-color 0.2s',
     whiteSpace: 'nowrap',
-    fontSize: '0.8rem',
-    fontWeight: active ? 600 : 400,
+    fontSize: '0.9rem',
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
@@ -398,31 +400,67 @@ function NhraPageGuard({ children }: { children: React.ReactNode }) {
 }
 
 function AppShell({ children }: { children: React.ReactNode }) {
+  const { theme } = useTheme();
+  const logoSrc = theme === 'dark'
+    ? '/nhra-tech-services-logo-dark.svg'
+    : '/nhra-tech-services-logo-light.svg';
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+      {/* Outer header container — tall enough to contain the overflowing logo */}
       <header
         style={{
           position: 'relative',
-          backgroundColor: 'var(--color-header-bg)',
+          height: '82px',
+          flexShrink: 0,
           color: 'var(--color-header-text)',
-          padding: '0.75rem 1.5rem',
-          boxShadow: 'var(--shadow-md)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '1rem',
         }}
       >
-        <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', textDecoration: 'none' }}>
-          <img src="/nhra-tech-services-logo.svg" alt="NHRA Tech Services" style={{ height: '40px', width: 'auto' }} />
+        {/* Blue banner bar — 84px tall, centered on the logo */}
+        <div
+          style={{
+            position: 'absolute',
+            top: '34px',
+            left: 0,
+            right: 0,
+            height: '47px',
+            backgroundColor: 'var(--color-header-bg)',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'flex-end',
+            paddingRight: '1.25rem',
+            gap: '1rem',
+            zIndex: 1,
+          }}
+        >
+          <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
+            <Navigation />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+            <ThemeToggle />
+            <UserMenu />
+          </div>
+        </div>
+
+        {/* NHRA logo — absolutely positioned, spills above and below the blue bar */}
+        <Link
+          to="/"
+          style={{
+            position: 'absolute',
+            top: '18px',
+            left: '16px',
+            zIndex: 10,
+            textDecoration: 'none',
+            display: 'block',
+          }}
+        >
+          <img
+            src={logoSrc}
+            alt="NHRA Tech Services"
+            style={{ height: '75px', width: 'auto', display: 'block' }}
+          />
         </Link>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', overflow: 'hidden' }}>
-          <Navigation />
-        </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          <ThemeToggle />
-          <UserMenu />
-        </div>
       </header>
 
       <main style={{ flex: 1 }}><NhraPageGuard>{children}</NhraPageGuard></main>
