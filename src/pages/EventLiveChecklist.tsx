@@ -391,8 +391,15 @@ export default function EventLiveChecklist() {
     <div style={{ maxWidth: 960, margin: '0 auto', padding: '1.5rem 1rem' }}>
       {/* Header */}
       <div style={{ marginBottom: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 4 }}>
           <Link to={`/event-ops/${planId}`} style={{ fontSize: 13, color: '#2563eb' }}>← Back to Plan</Link>
+          <Link
+            to={`/event-ops/${planId}/post-report`}
+            data-testid="post-report-link"
+            style={{ fontSize: 13, color: '#7c3aed', fontWeight: 600 }}
+          >
+            Generate Post-Event Report →
+          </Link>
         </div>
         <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700 }}>
           Live Checklist — {plan.event_code} {plan.year}

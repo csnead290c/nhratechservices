@@ -490,3 +490,208 @@ export async function clearTaskFollowup(planId: number, taskId: number): Promise
 export async function clearTaskCarryForward(planId: number, taskId: number): Promise<{ success: boolean }> {
   return eoPost('clearTaskCarryForward', { plan_id: planId, task_id: taskId });
 }
+
+// ── v39 Post-Event Report Types ───────────────────────────────────────────
+
+export type ReportStatus = 'draft' | 'generated' | 'in_review' | 'finalized' | 'archived';
+export type ReportItemSourceType = 'plan_task' | 'live_task_update' | 'incident' | 'manual' | 'file' | 'followup';
+
+export interface EventPostReport {
+  id: number;
+  uuid: string;
+  event_plan_id: number;
+  title: string;
+  status: ReportStatus;
+  summary: string | null;
+  generated_summary: string | null;
+  completed_task_count: number;
+  open_task_count: number;
+  issue_task_count: number;
+  followup_task_count: number;
+  carry_forward_task_count: number;
+  incident_count: number;
+  generated_at: string | null;
+  finalized_at: string | null;
+  finalized_by: number | null;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventPostReportSection {
+  id: number;
+  report_id: number;
+  section_key: string;
+  title: string;
+  body: string | null;
+  generated_body: string | null;
+  sort_order: number;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventPostReportItem {
+  id: number;
+  report_id: number;
+  source_type: ReportItemSourceType;
+  source_id: number | null;
+  title: string;
+  body: string | null;
+  status: ReportStatus;
+  priority: TaskPriority;
+  assigned_user_id: number | null;
+  assigned_person_id: number | null;
+  due_at: string | null;
+  completed_at: string | null;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventPostReportFile {
+  id: number;
+  report_id: number;
+  file_type: FileType;
+  title: string;
+  url: string | null;
+  box_file_id: string | null;
+  box_folder_id: string | null;
+  notes: string | null;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventPostReportIncident {
+  id: number;
+  report_id: number;
+  incident_id: number | null;
+  incident_analysis_id: number | null;
+  title: string;
+  summary: string | null;
+  status: ReportStatus;
+  followup_required: number;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ReportPreviewCounts {
+  total_tasks: number;
+  completed_tasks: number;
+  open_tasks: number;
+  issue_tasks: number;
+  followup_tasks: number;
+  carry_forward_tasks: number;
+  file_count: number;
+  staff_count: number;
+}
+
+export interface ReportPreview {
+  plan: EventPlan;
+  staff: EventPlanStaff[];
+  sessions: Array<{
+    session: EventPlanSession;
+    live_status: EventLiveSessionStatus | null;
+    task_count: number;
+    complete_count: number;
+  }>;
+  files: EventPlanFile[];
+  counts: ReportPreviewCounts;
+  issue_items: Array<EventPlanTask & { live_update: EventLiveTaskUpdate }>;
+  followup_items: Array<EventPlanTask & { live_update: EventLiveTaskUpdate }>;
+  sections: Array<Pick<EventPostReportSection, 'section_key' | 'title' | 'generated_body'>>;
+}
+
+// ── v39 Read actions ──────────────────────────────────────────────────────
+
+export async function listPostReports(planId: number): Promise<{ reports: EventPostReport[] }> {
+  return eoGet('listPostReports', { plan_id: planId });
+}
+
+export async function getPostReport(reportId: number): Promise<{ report: EventPostReport }> {
+  return eoGet('getPostReport', { report_id: reportId });
+}
+
+export async function getPostReportSections(reportId: number): Promise<{ sections: EventPostReportSection[] }> {
+  return eoGet('getPostReportSections', { report_id: reportId });
+}
+
+export async function getPostReportItems(reportId: number): Promise<{ items: EventPostReportItem[] }> {
+  return eoGet('getPostReportItems', { report_id: reportId });
+}
+
+export async function getPostReportFiles(reportId: number): Promise<{ files: EventPostReportFile[] }> {
+  return eoGet('getPostReportFiles', { report_id: reportId });
+}
+
+export async function getPostReportIncidents(reportId: number): Promise<{ incidents: EventPostReportIncident[] }> {
+  return eoGet('getPostReportIncidents', { report_id: reportId });
+}
+
+export async function getPostReportPreview(planId: number): Promise<{ preview: ReportPreview }> {
+  return eoGet('getPostReportPreview', { plan_id: planId });
+}
+
+// ── v39 Admin actions ─────────────────────────────────────────────────────
+
+export async function generatePostReport(planId: number): Promise<{ success: boolean; report_id: number }> {
+  return eoPost('generatePostReport', { plan_id: planId });
+}
+
+export async function createPostReport(planId: number, title?: string): Promise<{ success: boolean; report_id: number }> {
+  return eoPost('createPostReport', { plan_id: planId, title: title ?? '' });
+}
+
+export async function updatePostReport(reportId: number, payload: { title?: string; summary?: string; generated_summary?: string }): Promise<{ success: boolean }> {
+  return eoPost('updatePostReport', { report_id: reportId, ...payload });
+}
+
+export async function finalizePostReport(reportId: number): Promise<{ success: boolean }> {
+  return eoPost('finalizePostReport', { report_id: reportId });
+}
+
+export async function reopenPostReport(reportId: number): Promise<{ success: boolean }> {
+  return eoPost('reopenPostReport', { report_id: reportId });
+}
+
+export async function deletePostReport(reportId: number): Promise<{ success: boolean }> {
+  return eoPost('softDeletePostReport', { report_id: reportId });
+}
+
+export async function regeneratePostReportSummary(reportId: number): Promise<{ success: boolean }> {
+  return eoPost('regeneratePostReportSummary', { report_id: reportId });
+}
+
+export async function updateReportSection(reportId: number, sectionId: number, payload: { title?: string; body?: string }): Promise<{ success: boolean }> {
+  return eoPost('updateReportSection', { report_id: reportId, section_id: sectionId, ...payload });
+}
+
+export async function addReportItem(reportId: number, payload: { title: string; body?: string; priority?: TaskPriority }): Promise<{ success: boolean; item_id: number }> {
+  return eoPost('addReportItem', { report_id: reportId, ...payload });
+}
+
+export async function updateReportItem(reportId: number, itemId: number, payload: Partial<Pick<EventPostReportItem, 'title' | 'body' | 'status' | 'priority'>>): Promise<{ success: boolean }> {
+  return eoPost('updateReportItem', { report_id: reportId, item_id: itemId, ...payload });
+}
+
+export async function deleteReportItem(reportId: number, itemId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteReportItem', { report_id: reportId, item_id: itemId });
+}
+
+export async function addReportFile(reportId: number, payload: { title: string; file_type?: FileType; url?: string; box_file_id?: string; box_folder_id?: string; notes?: string }): Promise<{ success: boolean; file_id: number }> {
+  return eoPost('addReportFile', { report_id: reportId, ...payload });
+}
+
+export async function deleteReportFile(reportId: number, fileId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteReportFile', { report_id: reportId, file_id: fileId });
+}
+
+export async function addReportIncident(reportId: number, payload: { title: string; summary?: string; incident_id?: number; followup_required?: boolean }): Promise<{ success: boolean; incident_ref_id: number }> {
+  return eoPost('addReportIncident', { report_id: reportId, ...payload });
+}
+
+export async function deleteReportIncident(reportId: number, incidentRefId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteReportIncident', { report_id: reportId, incident_ref_id: incidentRefId });
+}

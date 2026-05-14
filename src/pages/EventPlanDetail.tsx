@@ -201,6 +201,13 @@ export default function EventPlanDetail() {
           >
             Live Checklist
           </Link>
+          <Link
+            to={`/event-ops/${planId}/post-report`}
+            data-testid="post-report-link"
+            style={{ ...S.btn, backgroundColor: '#7c3aed', color: '#fff', textDecoration: 'none' } as React.CSSProperties}
+          >
+            Post-Event Report
+          </Link>
           {canAdmin && (
             <Link to={`/event-ops/${planId}/pre-plan`} style={{ ...S.btn, ...S.btnPrim, textDecoration: 'none' } as React.CSSProperties}>
               Edit Plan

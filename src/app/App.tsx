@@ -37,6 +37,8 @@ const EventOpsList = lazy(() => import('../pages/EventOpsList'));
 const EventPlanDetail = lazy(() => import('../pages/EventPlanDetail'));
 const EventPrePlanEditor = lazy(() => import('../pages/EventPrePlanEditor'));
 const EventLiveChecklist = lazy(() => import('../pages/EventLiveChecklist'));
+const EventPostReportBuilder = lazy(() => import('../pages/EventPostReportBuilder'));
+const EventPostReportDetail = lazy(() => import('../pages/EventPostReportDetail'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -611,6 +613,20 @@ function App() {
               <CapabilityRoute requireCap="eventops.read">
                 <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
                   <EventLiveChecklist />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/event-ops/:id/post-report" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventPostReportBuilder />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/event-ops/reports/:reportId" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventPostReportDetail />
                 </Suspense>
               </CapabilityRoute>
             } />
