@@ -16,6 +16,7 @@ header('Cache-Control: no-store, no-cache, must-revalidate');
 require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
+require_once __DIR__ . '/event-ops-reports.php';
 
 $pdo = getDB();
 $auth = rsa_requireAuth();
@@ -888,10 +889,18 @@ $readActions = [
     'getPlanTasks'         => 'eo_getPlanTasks',
     'getPlanFiles'         => 'eo_getPlanFiles',
     // v38 live checklist reads
-    'getLiveChecklist'     => 'eo_getLiveChecklist',
-    'listLiveSessionStatus'=> 'eo_listLiveSessionStatus',
-    'listLiveTaskUpdates'  => 'eo_listLiveTaskUpdates',
-    'getLiveTaskSummary'   => 'eo_getLiveTaskSummary',
+    'getLiveChecklist'      => 'eo_getLiveChecklist',
+    'listLiveSessionStatus' => 'eo_listLiveSessionStatus',
+    'listLiveTaskUpdates'   => 'eo_listLiveTaskUpdates',
+    'getLiveTaskSummary'    => 'eo_getLiveTaskSummary',
+    // v39 post-event report reads
+    'listPostReports'          => 'eo_listPostReports',
+    'getPostReport'            => 'eo_getPostReport',
+    'getPostReportSections'    => 'eo_getPostReportSections',
+    'getPostReportItems'       => 'eo_getPostReportItems',
+    'getPostReportFiles'       => 'eo_getPostReportFiles',
+    'getPostReportIncidents'   => 'eo_getPostReportIncidents',
+    'getPostReportPreview'     => 'eo_getPostReportPreview',
 ];
 
 $adminActions = [
@@ -918,7 +927,7 @@ $adminActions = [
     'updateFile'                => 'eo_updateFile',
     'deleteFile'                => 'eo_deleteFile',
     // v38 live checklist writes
-    'startLiveChecklist'        => 'eo_startLiveChecklist',
+    'startLiveChecklist'            => 'eo_startLiveChecklist',
     'updateLiveChecklistStatus' => 'eo_updateLiveChecklistStatus',
     'startSession'              => 'eo_startSession',
     'completeSession'           => 'eo_completeSession',
@@ -928,8 +937,24 @@ $adminActions = [
     'addTaskFileReference'      => 'eo_addTaskFileReference',
     'markTaskFollowupRequired'  => 'eo_markTaskFollowupRequired',
     'markTaskCarryForward'      => 'eo_markTaskCarryForward',
-    'clearTaskFollowup'         => 'eo_clearTaskFollowup',
-    'clearTaskCarryForward'     => 'eo_clearTaskCarryForward',
+    'clearTaskFollowup'                => 'eo_clearTaskFollowup',
+    'clearTaskCarryForward'            => 'eo_clearTaskCarryForward',
+    // v39 post-event report writes
+    'generatePostReport'               => 'eo_generatePostReport',
+    'createPostReport'                 => 'eo_createPostReport',
+    'updatePostReport'                 => 'eo_updatePostReport',
+    'finalizePostReport'               => 'eo_finalizePostReport',
+    'reopenPostReport'                 => 'eo_reopenPostReport',
+    'softDeletePostReport'             => 'eo_softDeletePostReport',
+    'regeneratePostReportSummary'      => 'eo_regeneratePostReportSummary',
+    'updateReportSection'              => 'eo_updateReportSection',
+    'addReportItem'                    => 'eo_addReportItem',
+    'updateReportItem'                 => 'eo_updateReportItem',
+    'deleteReportItem'                 => 'eo_deleteReportItem',
+    'addReportFile'                    => 'eo_addReportFile',
+    'deleteReportFile'                 => 'eo_deleteReportFile',
+    'addReportIncident'                => 'eo_addReportIncident',
+    'deleteReportIncident'             => 'eo_deleteReportIncident',
 ];
 
 if (isset($readActions[$action])) {
