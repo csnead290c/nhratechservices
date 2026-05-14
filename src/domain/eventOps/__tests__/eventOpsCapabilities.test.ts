@@ -12,8 +12,8 @@ import {
 } from '../../config/capabilities';
 
 describe('eventops capabilities — plan grants', () => {
-  it('nhra plan includes eventops.read', () => {
-    expect(PLAN_CAPABILITIES.nhra.has('eventops.read')).toBe(true);
+  it('nhra plan does NOT include eventops.read (admin/owner only)', () => {
+    expect(PLAN_CAPABILITIES.nhra.has('eventops.read')).toBe(false);
   });
 
   it('nhra plan does NOT include eventops.admin', () => {
@@ -64,9 +64,9 @@ describe('eventops capabilities — role grants', () => {
 });
 
 describe('eventops hasCap — combined contexts', () => {
-  it('nhra plan member can read event ops', () => {
+  it('nhra plan member CANNOT read event ops (admin/owner only)', () => {
     const ctx: UserCapabilityContext = { plan: 'nhra', role: 'member', fullAccess: false };
-    expect(hasCap(ctx, 'eventops.read')).toBe(true);
+    expect(hasCap(ctx, 'eventops.read')).toBe(false);
   });
 
   it('nhra plan member CANNOT admin event ops', () => {

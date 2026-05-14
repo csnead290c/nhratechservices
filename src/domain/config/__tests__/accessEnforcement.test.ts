@@ -89,16 +89,16 @@ describe('Access Enforcement', () => {
       expect(hasCap(ctx, 'nhra.parity')).toBe(true);
     });
 
-    it('can access NHRA tech master read', () => {
-      expect(hasCap(ctx, 'nhra.tech.read')).toBe(true);
+    it('CANNOT access NHRA tech master read (admin/owner only)', () => {
+      expect(hasCap(ctx, 'nhra.tech.read')).toBe(false);
     });
 
-    it('can access NHRA tech master admin', () => {
-      expect(hasCap(ctx, 'nhra.tech.admin')).toBe(true);
+    it('CANNOT access NHRA tech master admin (admin/owner only)', () => {
+      expect(hasCap(ctx, 'nhra.tech.admin')).toBe(false);
     });
 
-    it('can access rules.read', () => {
-      expect(hasCap(ctx, 'rules.read')).toBe(true);
+    it('CANNOT access rules.read (admin/owner only)', () => {
+      expect(hasCap(ctx, 'rules.read')).toBe(false);
     });
 
     it('cannot access rules.admin', () => {

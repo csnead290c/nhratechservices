@@ -421,17 +421,12 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
 
   nhra: new Set<Capability>([
     'nhra.parity',
-    'nhra.tech.read',
-    'nhra.tech.admin',
-    'rules.read',
-    'committees.read',
     'sim.basic',
     'charts.basic',
     'weather.manual',
     'incidents.read',
     'incidents.create',
     'incidents.edit.own',
-    'eventops.read',
   ]),
 };
 
@@ -441,8 +436,8 @@ export const PLAN_CAPABILITIES: Record<PlanId, ReadonlySet<Capability>> = {
 
 /** Capabilities granted by role regardless of plan (owner/admin get admin tools). */
 export const ROLE_CAPABILITIES: Record<RoleId, ReadonlySet<Capability>> = {
-  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
-  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
+  owner: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
+  admin: new Set<Capability>(['admin.access', 'admin.devTools', 'admin.userManagement', 'nhra.tech.read', 'nhra.tech.admin', 'rules.read', 'rules.admin', 'committees.read', 'committees.admin', 'incidents.edit.all', 'eventops.read', 'eventops.admin']),
   member: new Set<Capability>([]),
   viewer: new Set<Capability>([]),
 };

@@ -176,8 +176,8 @@ describe('incident capabilities in PLAN_CAPABILITIES', () => {
 // Rules & Governance capabilities in PLAN_CAPABILITIES
 // =========================================================================
 describe('rules capabilities in PLAN_CAPABILITIES', () => {
-  it('nhra plan grants rules.read', () => {
-    expect(PLAN_CAPABILITIES.nhra.has('rules.read')).toBe(true);
+  it('nhra plan does NOT grant rules.read (admin/owner only)', () => {
+    expect(PLAN_CAPABILITIES.nhra.has('rules.read')).toBe(false);
   });
 
   it('nhra plan does NOT grant rules.admin', () => {
