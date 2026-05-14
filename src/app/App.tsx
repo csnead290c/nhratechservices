@@ -318,6 +318,11 @@ function Navigation() {
             <div style={{ borderTop: '1px solid rgba(255,255,255,0.1)', margin: '4px 0' }} />
           </div>
           {secondaryLinks}
+          {/* On mobile, theme toggle + user menu live here instead of the bar */}
+          <div className="nhrats-dropdown-mobile-extras" style={{ display: 'none', borderTop: '1px solid rgba(255,255,255,0.1)', marginTop: '4px', paddingTop: '8px', gap: '8px', flexDirection: 'column' }}>
+            <ThemeToggle />
+            <UserMenu />
+          </div>
         </nav>
       )}
 
@@ -332,6 +337,8 @@ function Navigation() {
           .nhrats-desktop-nav { display: none !important; }
           .nhrats-mobile-btn { display: block !important; }
           .nhrats-dropdown-primary { display: block; }
+          .nhrats-bar-extras { display: none !important; }
+          .nhrats-dropdown-mobile-extras { display: flex !important; }
         }
       `}</style>
     </>
@@ -437,7 +444,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
           <div style={{ display: 'flex', gap: '0.25rem', alignItems: 'center', flex: 1, justifyContent: 'flex-end' }}>
             <Navigation />
           </div>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
+          <div className="nhrats-bar-extras" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexShrink: 0 }}>
             <ThemeToggle />
             <UserMenu />
           </div>
