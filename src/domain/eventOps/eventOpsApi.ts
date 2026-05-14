@@ -351,3 +351,142 @@ export async function updateFile(fileId: number, data: Partial<Omit<EventPlanFil
 export async function deleteFile(fileId: number): Promise<{ success: boolean }> {
   return eoPost('deleteFile', { file_id: fileId });
 }
+
+// ── v38 Live Checklist Types ───────────────────────────────────────────────
+
+export type LiveStatus =
+  | 'not_started'
+  | 'in_progress'
+  | 'complete'
+  | 'issue_found'
+  | 'skipped'
+  | 'blocked'
+  | 'not_applicable';
+
+export interface EventLiveChecklist {
+  id: number;
+  uuid: string;
+  event_plan_id: number;
+  status: LiveStatus;
+  active_session_id: number | null;
+  started_at: string | null;
+  completed_at: string | null;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventLiveTaskUpdate {
+  id: number;
+  uuid: string;
+  event_plan_id: number;
+  task_id: number;
+  session_id: number | null;
+  status: LiveStatus;
+  result: string | null;
+  notes: string | null;
+  issue_found: number;
+  followup_required: number;
+  carry_forward: number;
+  completed_by: number | null;
+  completed_at: string | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventLiveSessionStatus {
+  id: number;
+  event_plan_id: number;
+  session_id: number;
+  status: LiveStatus;
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  updated_by: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LiveTaskSummary {
+  total: number;
+  by_status: Partial<Record<LiveStatus, number>>;
+  complete: number;
+  open: number;
+  in_progress: number;
+  issue_found: number;
+  followup_required: number;
+  carry_forward: number;
+}
+
+export interface EventPlanSessionWithLive extends EventPlanSession {
+  live_status: EventLiveSessionStatus | null;
+}
+
+export interface EventPlanTaskWithLive extends EventPlanTask {
+  live_update: EventLiveTaskUpdate | null;
+}
+
+// ── v38 Live Checklist read actions ───────────────────────────────────────
+
+export async function getLiveChecklist(planId: number): Promise<{ checklist: EventLiveChecklist }> {
+  return eoGet('getLiveChecklist', { plan_id: planId });
+}
+
+export async function listLiveSessionStatus(planId: number): Promise<{ sessions: EventPlanSessionWithLive[] }> {
+  return eoGet('listLiveSessionStatus', { plan_id: planId });
+}
+
+export async function listLiveTaskUpdates(planId: number): Promise<{ tasks: EventPlanTaskWithLive[] }> {
+  return eoGet('listLiveTaskUpdates', { plan_id: planId });
+}
+
+export async function getLiveTaskSummary(planId: number): Promise<{ summary: LiveTaskSummary }> {
+  return eoGet('getLiveTaskSummary', { plan_id: planId });
+}
+
+// ── v38 Live Checklist admin actions ──────────────────────────────────────
+
+export async function startLiveChecklist(planId: number): Promise<{ success: boolean; checklist_id: number }> {
+  return eoPost('startLiveChecklist', { plan_id: planId });
+}
+
+export async function updateLiveChecklistStatus(planId: number, status: LiveStatus): Promise<{ success: boolean }> {
+  return eoPost('updateLiveChecklistStatus', { plan_id: planId, status });
+}
+
+export async function updateSessionStatus(planId: number, sessionId: number, status: LiveStatus, notes?: string): Promise<{ success: boolean }> {
+  return eoPost('updateSessionStatus', { plan_id: planId, session_id: sessionId, status, notes: notes ?? '' });
+}
+
+export async function startSession(planId: number, sessionId: number): Promise<{ success: boolean }> {
+  return eoPost('startSession', { plan_id: planId, session_id: sessionId });
+}
+
+export async function completeSession(planId: number, sessionId: number): Promise<{ success: boolean }> {
+  return eoPost('completeSession', { plan_id: planId, session_id: sessionId });
+}
+
+export async function updateTaskStatus(planId: number, taskId: number, payload: { status: LiveStatus; result?: string }): Promise<{ success: boolean }> {
+  return eoPost('updateTaskStatus', { plan_id: planId, task_id: taskId, ...payload });
+}
+
+export async function addTaskNote(planId: number, taskId: number, notes: string): Promise<{ success: boolean }> {
+  return eoPost('addTaskNote', { plan_id: planId, task_id: taskId, notes });
+}
+
+export async function markTaskFollowupRequired(planId: number, taskId: number): Promise<{ success: boolean }> {
+  return eoPost('markTaskFollowupRequired', { plan_id: planId, task_id: taskId });
+}
+
+export async function markTaskCarryForward(planId: number, taskId: number): Promise<{ success: boolean }> {
+  return eoPost('markTaskCarryForward', { plan_id: planId, task_id: taskId });
+}
+
+export async function clearTaskFollowup(planId: number, taskId: number): Promise<{ success: boolean }> {
+  return eoPost('clearTaskFollowup', { plan_id: planId, task_id: taskId });
+}
+
+export async function clearTaskCarryForward(planId: number, taskId: number): Promise<{ success: boolean }> {
+  return eoPost('clearTaskCarryForward', { plan_id: planId, task_id: taskId });
+}

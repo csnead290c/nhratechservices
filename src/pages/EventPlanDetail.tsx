@@ -193,11 +193,20 @@ export default function EventPlanDetail() {
           <h1 style={S.h1}>{plan.title}</h1>
           <div style={S.meta}>{plan.year} · {plan.event_code}{plan.track_name ? ` · ${plan.track_name}` : ''}</div>
         </div>
-        {canAdmin && (
-          <Link to={`/event-ops/${planId}/pre-plan`} style={{ ...S.btn, ...S.btnPrim, textDecoration: 'none' } as React.CSSProperties}>
-            Edit Plan
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <Link
+            to={`/event-ops/${planId}/live`}
+            data-testid="live-checklist-link"
+            style={{ ...S.btn, backgroundColor: '#16a34a', color: '#fff', textDecoration: 'none' } as React.CSSProperties}
+          >
+            Live Checklist
           </Link>
-        )}
+          {canAdmin && (
+            <Link to={`/event-ops/${planId}/pre-plan`} style={{ ...S.btn, ...S.btnPrim, textDecoration: 'none' } as React.CSSProperties}>
+              Edit Plan
+            </Link>
+          )}
+        </div>
       </div>
 
       <div style={S.tabs}>
