@@ -21,7 +21,7 @@ export default function Landing() {
       }}
     >
       <img
-        src="/nhra-header-logo.png"
+        src="/nhra-tech-services-logo.svg"
         alt="NHRA Tech Services"
         style={{ height: '72px', marginBottom: '28px' }}
       />

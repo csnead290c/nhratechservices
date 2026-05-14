@@ -1004,7 +1004,7 @@ function Predict() {
           {/* ET Slip Style Results */}
           <div className="et-slip" style={{ opacity: (isDebouncing || loading) ? 0.7 : 1 }}>
             <div className="et-slip-header">
-              <img src="/nhra-header-logo.png" alt="NHRA" style={{ height: '48px', marginBottom: '4px', mixBlendMode: 'multiply' }} />
+              <img src="/nhra-tech-services-logo.svg" alt="NHRA Tech Services" style={{ height: '48px', marginBottom: '4px', mixBlendMode: 'multiply' }} />
 
               <div style={{ fontSize: '8px', color: '#666', marginTop: '4px' }}>
                 {new Date().toLocaleDateString()} {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}

@@ -414,7 +414,7 @@ function AppShell({ children }: { children: React.ReactNode }) {
         }}
       >
         <Link to="/" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', textDecoration: 'none' }}>
-          <img src="/nhra-header-logo.png" alt="NHRA Tech Services" style={{ height: '40px', width: 'auto' }} />
+          <img src="/nhra-tech-services-logo.svg" alt="NHRA Tech Services" style={{ height: '40px', width: 'auto' }} />
         </Link>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', overflow: 'hidden' }}>
           <Navigation />
