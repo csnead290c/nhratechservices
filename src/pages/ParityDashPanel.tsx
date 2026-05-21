@@ -11,6 +11,8 @@ import {
   type ParityDeltaRow,
   type RangeParityMatrixResponse,
   type EventWithStats,
+  type EngineComboRow,
+  type BodyStyleRow,
 } from '../services/parityApi';
 import { useCapabilities } from '../domain/config/useCapabilities';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, Legend } from 'recharts';
@@ -39,6 +41,211 @@ const PARITY_METRICS = [
 const TRUST_THRESHOLD = 60;
 const MAPPED_LOW = 20;
 const MAPPED_HIGH = 80;
+
+// ── Body style categories ────────────────────────────────────────────────────
+const BODY_STYLE_CATEGORIES = [
+  'Default', 'Top Fuel', 'Funny Car', 'Pro Stock', 'Pro Stock Motorcycle',
+  'Pro Mod', 'Top Alcohol Dragster', 'Top Alcohol Funny Car',
+];
+
+// ── Definitions Modal ─────────────────────────────────────────────────────────
+
+function DefinitionsModal({ onClose }: { onClose: () => void }) {
+  const [tab, setTab] = useState<'colors' | 'request'>('colors');
+
+  // Color editing state
+  const [combos, setCombos] = useState<EngineComboRow[]>([]);
+  const [bodyStyles, setBodyStyles] = useState<BodyStyleRow[]>([]);
+  const [loadingDefs, setLoadingDefs] = useState(true);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [saveMsg, setSaveMsg] = useState('');
+
+  // Request form state
+  const [reqName, setReqName] = useState('');
+  const [reqCategory, setReqCategory] = useState('Default');
+  const [reqColor, setReqColor] = useState('#888888');
+  const [reqNotes, setReqNotes] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [reqMsg, setReqMsg] = useState('');
+  const [reqError, setReqError] = useState('');
+
+  useEffect(() => {
+    setLoadingDefs(true);
+    Promise.all([parityApi.listEngineCombos(), parityApi.listBodyStyles()])
+      .then(([ec, bs]) => { setCombos(ec.combos); setBodyStyles(bs.bodyStyles); })
+      .catch(() => {})
+      .finally(() => setLoadingDefs(false));
+  }, []);
+
+  const handleSaveColor = async (type: 'combo' | 'body', item: EngineComboRow | BodyStyleRow, newColor: string) => {
+    const key = `${type}-${item.id}`;
+    setSavingId(key);
+    setSaveMsg('');
+    try {
+      if (type === 'combo') {
+        const c = item as EngineComboRow;
+        await parityApi.upsertEngineCombo({
+          id: c.id, name: c.name, category: c.category ?? undefined,
+          colorHex: newColor, tPower: c.t_power, dPower: c.d_power,
+          FF: c.friction_factor, fuelType: c.fuel_type, usesN2o: c.uses_n2o,
+        });
+        setCombos(prev => prev.map(x => x.id === c.id ? { ...x, color_hex: newColor } : x));
+      } else {
+        const b = item as BodyStyleRow;
+        await parityApi.upsertBodyStyle({
+          id: b.id, name: b.name, category: b.category ?? undefined,
+          bodyStyleNum: b.body_style_num ?? null, cd: b.cd, frontalArea: b.frontal_area,
+          liftCoef: b.lift_coef, overhangIn: b.overhang_in, colorHex: newColor,
+        });
+        setBodyStyles(prev => prev.map(x => x.id === b.id ? { ...x, color_hex: newColor } : x));
+      }
+      setSaveMsg('Saved!');
+      setTimeout(() => setSaveMsg(''), 2000);
+    } catch (e: any) {
+      setSaveMsg('Save failed: ' + (e.message ?? 'unknown error'));
+    }
+    setSavingId(null);
+  };
+
+  const handleSubmitRequest = async () => {
+    if (!reqName.trim()) { setReqError('Name is required.'); return; }
+    setSubmitting(true); setReqError(''); setReqMsg('');
+    try {
+      await parityApi.requestBodyStyle({ name: reqName.trim(), category: reqCategory, suggestedColor: reqColor, notes: reqNotes.trim() });
+      setReqMsg('Request sent! You will be notified when it is added.');
+      setReqName(''); setReqNotes(''); setReqColor('#888888');
+    } catch (e: any) {
+      setReqError('Failed to send request: ' + (e.message ?? 'unknown error'));
+    }
+    setSubmitting(false);
+  };
+
+  const overlayStyle: React.CSSProperties = {
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', zIndex: 1000,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+  };
+  const modalStyle: React.CSSProperties = {
+    background: 'var(--color-surface, #1e1e2e)', border: '1px solid var(--color-border)',
+    borderRadius: 8, padding: '1.25rem', width: 480, maxWidth: '95vw',
+    maxHeight: '85vh', overflowY: 'auto', position: 'relative',
+  };
+  const tabBtn = (active: boolean): React.CSSProperties => ({
+    background: 'none', border: 'none', cursor: 'pointer', padding: '0.4rem 1rem',
+    borderBottom: active ? '2px solid var(--color-primary)' : '2px solid transparent',
+    fontWeight: active ? 700 : 400, color: active ? 'var(--color-primary)' : 'var(--color-muted)',
+    fontSize: '0.8rem',
+  });
+  const colorRow: React.CSSProperties = {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    padding: '0.35rem 0', borderBottom: '1px solid var(--color-border)',
+  };
+
+  return (
+    <div style={overlayStyle} onClick={e => { if (e.target === e.currentTarget) onClose(); }}>
+      <div style={modalStyle}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+          <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Definitions</h3>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--color-muted)', lineHeight: 1 }}>✕</button>
+        </div>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--color-border)', marginBottom: '1rem' }}>
+          <button style={tabBtn(tab === 'colors')} onClick={() => setTab('colors')}>Edit Colors</button>
+          <button style={tabBtn(tab === 'request')} onClick={() => setTab('request')}>Request Body Style</button>
+        </div>
+
+        {tab === 'colors' && (
+          <div>
+            {saveMsg && (
+              <div style={{ marginBottom: '0.5rem', fontSize: '0.75rem', color: saveMsg.startsWith('Save failed') ? '#ef4444' : '#22c55e' }}>{saveMsg}</div>
+            )}
+            {loadingDefs ? <p style={{ color: '#888', fontSize: '0.8rem' }}>Loading...</p> : (
+              <>
+                <p style={{ fontSize: '0.7rem', color: 'var(--color-muted)', marginBottom: '0.75rem' }}>
+                  Click a color swatch to change it. Changes apply site-wide for all users.
+                </p>
+                <h4 style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '0.4rem', color: 'var(--color-text)' }}>Engine Combos</h4>
+                {combos.length === 0 && <p style={{ fontSize: '0.75rem', color: '#888' }}>No combos defined.</p>}
+                {combos.map(c => (
+                  <div key={c.id} style={colorRow}>
+                    <span style={{ fontSize: '0.8rem' }}>{c.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>{c.category}</span>
+                      <input
+                        type="color"
+                        value={c.color_hex ?? '#888888'}
+                        disabled={savingId === `combo-${c.id}`}
+                        onChange={e => handleSaveColor('combo', c, e.target.value)}
+                        style={{ width: 32, height: 22, border: 'none', cursor: 'pointer', borderRadius: 3, padding: 1 }}
+                        title="Click to change color"
+                      />
+                    </div>
+                  </div>
+                ))}
+                <h4 style={{ fontSize: '0.8rem', fontWeight: 700, margin: '0.75rem 0 0.4rem', color: 'var(--color-text)' }}>Body Styles</h4>
+                {bodyStyles.length === 0 && <p style={{ fontSize: '0.75rem', color: '#888' }}>No body styles defined.</p>}
+                {bodyStyles.map(b => (
+                  <div key={b.id} style={colorRow}>
+                    <span style={{ fontSize: '0.8rem' }}>{b.name}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)' }}>{b.category}</span>
+                      <input
+                        type="color"
+                        value={b.color_hex ?? '#888888'}
+                        disabled={savingId === `body-${b.id}`}
+                        onChange={e => handleSaveColor('body', b, e.target.value)}
+                        style={{ width: 32, height: 22, border: 'none', cursor: 'pointer', borderRadius: 3, padding: 1 }}
+                        title="Click to change color"
+                      />
+                    </div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
+
+        {tab === 'request' && (
+          <div>
+            <p style={{ fontSize: '0.75rem', color: 'var(--color-muted)', marginBottom: '0.75rem' }}>
+              Don't see a body style you need? Fill out this form and an admin will review your request.
+            </p>
+            {reqError && <div style={{ background: '#2d1b1b', color: '#ef4444', padding: '0.4rem 0.6rem', borderRadius: 4, fontSize: '0.75rem', marginBottom: '0.5rem' }}>{reqError}</div>}
+            {reqMsg && <div style={{ background: '#1b2d1b', color: '#22c55e', padding: '0.4rem 0.6rem', borderRadius: 4, fontSize: '0.75rem', marginBottom: '0.5rem' }}>{reqMsg}</div>}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              <label style={{ fontSize: '0.8rem' }}>Name *
+                <input value={reqName} onChange={e => setReqName(e.target.value)}
+                  placeholder="e.g. Camaro SS Funny Car"
+                  style={{ display: 'block', width: '100%', marginTop: 3, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '0.8rem' }} />
+              </label>
+              <label style={{ fontSize: '0.8rem' }}>Category
+                <select value={reqCategory} onChange={e => setReqCategory(e.target.value)}
+                  style={{ display: 'block', width: '100%', marginTop: 3, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '0.8rem' }}>
+                  {BODY_STYLE_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+              <label style={{ fontSize: '0.8rem' }}>Suggested Color
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                  <input type="color" value={reqColor} onChange={e => setReqColor(e.target.value)}
+                    style={{ width: 40, height: 28, border: 'none', cursor: 'pointer', borderRadius: 3, padding: 1 }} />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)', fontFamily: 'monospace' }}>{reqColor}</span>
+                </div>
+              </label>
+              <label style={{ fontSize: '0.8rem' }}>Notes
+                <textarea value={reqNotes} onChange={e => setReqNotes(e.target.value)}
+                  placeholder="Describe the body style, class it's used in, reference info, etc."
+                  rows={3}
+                  style={{ display: 'block', width: '100%', marginTop: 3, padding: '0.35rem 0.5rem', border: '1px solid var(--color-border)', borderRadius: 4, background: 'var(--color-bg)', color: 'var(--color-text)', fontSize: '0.8rem', resize: 'vertical' }} />
+              </label>
+              <button onClick={handleSubmitRequest} disabled={submitting}
+                style={{ padding: '0.45rem 1rem', borderRadius: 4, border: 'none', cursor: submitting ? 'not-allowed' : 'pointer', fontWeight: 700, fontSize: '0.8rem', background: 'var(--color-primary)', color: '#fff', alignSelf: 'flex-start' }}>
+                {submitting ? 'Sending...' : 'Submit Request'}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
 // ── Deterministic combo colors via FNV-1a hash ─────────────────────────────
 // Produces the same color for a given combo name across sessions/reloads.
@@ -168,9 +375,11 @@ export default function ParityDashPanel({ event }: { event: EventWithStats | nul
   const [mode, setMode] = useState<'raw' | 'corrected'>('raw');
   const [topN, setTopN] = useState(4);
   const [sessionScope, setSessionScope] = useState<'qual' | 'elim' | 'both'>('both');
+  const [showDefs, setShowDefs] = useState(false);
 
   return (
     <div>
+      {showDefs && <DefinitionsModal onClose={() => setShowDefs(false)} />}
       <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--color-border)', marginBottom: '1rem' }}>
         <button style={viewMode === 'event' ? S.tabActive : S.tabInactive} onClick={() => setViewMode('event')}>Event Parity</button>
         <button style={viewMode === 'range' ? S.tabActive : S.tabInactive} onClick={() => setViewMode('range')}>Season / Range</button>
@@ -201,6 +410,13 @@ export default function ParityDashPanel({ event }: { event: EventWithStats | nul
             {[1, 2, 3, 4, 5, 6, 8, 10].map(n => <option key={n} value={n}>{n}</option>)}
           </select>
         </label>
+        <button
+          style={{ ...S.btn('secondary'), marginLeft: 'auto', fontSize: '0.7rem', padding: '0.25rem 0.6rem' }}
+          onClick={() => setShowDefs(true)}
+          title="Edit combo/body style colors or request a new body style"
+        >
+          ⚙ Definitions
+        </button>
       </div>
       {viewMode === 'event' ? (
         <EventParityView event={event} classIndex={classIndex} metric={metric} mode={mode} topN={topN} sessionScope={sessionScope} />

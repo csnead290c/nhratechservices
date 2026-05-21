@@ -1872,9 +1872,6 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     a.click(); URL.revokeObjectURL(url);
   }, [runs, sortedRuns, selectedDriver]);
 
-  // Determine if Pro Mod for body style display
-  const isProMod = classFilter === 'PM';
-
   // Refresh callback for assignment changes
   const handleAssignmentChanged = useCallback(() => {
     // Reload correction context for engine combo assignments
@@ -2071,7 +2068,7 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
           driverName={selectedDriver}
           classIndex={classFilter}
           onAssignmentChanged={handleAssignmentChanged}
-          showBodyStyles={isProMod}
+          showBodyStyles={true}
         />
       )}
 

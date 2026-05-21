@@ -303,6 +303,10 @@ switch ($action) {
         if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleDeleteBodyStyle($pdo, $auth);
         break;
+    case 'requestBodyStyle':
+        if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleRequestBodyStyle($auth);
+        break;
     // ── Driver Body Style endpoints ──────────────────────────────────────
     case 'listDriverBodyStyles':
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
@@ -6139,6 +6143,45 @@ function handleDeleteBodyStyle(PDO $pdo, array $auth): void {
 
     $pdo->prepare("DELETE FROM parity_body_styles WHERE id=?")->execute([$id]);
     rsa_jsonResponse(['ok' => true]);
+}
+
+// ============================================================================
+// POST ?action=requestBodyStyle   body: { name, category, suggestedColor, notes }
+// Sends an email to csnead@nhra.com with the request details.
+// ============================================================================
+
+function handleRequestBodyStyle(array $auth): void {
+    $input = rsa_getJsonInput();
+    $name  = trim($input['name'] ?? '');
+    $cat   = trim($input['category'] ?? '');
+    $color = trim($input['suggestedColor'] ?? '');
+    $notes = trim($input['notes'] ?? '');
+
+    if (!$name) rsa_jsonResponse(['error' => 'name is required'], 400);
+
+    $requesterEmail = $auth['email'] ?? 'unknown';
+
+    $subject = "Body Style Request: $name";
+    $body = <<<EMAIL
+A user has requested a new body style be added to NHRA Tech Services.
+
+Name:            $name
+Category:        $cat
+Suggested Color: $color
+Notes:           $notes
+
+Requested by: $requesterEmail
+EMAIL;
+
+    $headers = implode("\r\n", [
+        'From: NHRA Tech Services <noreply@nhratechservices.com>',
+        'Reply-To: ' . $requesterEmail,
+        'Content-Type: text/plain; charset=UTF-8',
+        'X-Mailer: NHRATS-Parity/1.0',
+    ]);
+
+    $sent = mail('csnead@nhra.com', $subject, $body, $headers);
+    rsa_jsonResponse(['ok' => true, 'sent' => $sent]);
 }
 
 // ============================================================================

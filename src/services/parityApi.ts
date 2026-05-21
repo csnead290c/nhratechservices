@@ -3193,4 +3193,11 @@ export const parityApi = {
     if (params.year) qs.set('year', String(params.year));
     return parityRequest<RtAnalysisResponse>(`/parity.php?${qs.toString()}`);
   },
+
+  async requestBodyStyle(params: { name: string; category: string; suggestedColor: string; notes: string }): Promise<{ ok: boolean }> {
+    return parityRequest<{ ok: boolean }>('/parity.php?action=requestBodyStyle', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
 };
