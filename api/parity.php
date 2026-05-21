@@ -6093,7 +6093,11 @@ function handleListDriverBodyStyles(PDO $pdo): void {
 // ============================================================================
 
 function handleUpsertDriverBodyStyle(PDO $pdo, array $auth): void {
-    requireAdminRole($auth);
+    $userId = rsa_resolveUserId($pdo, $auth);
+    $_role  = rsa_getUserRole($pdo, $userId);
+    if (!rsa_hasCap($pdo, $userId, $_role, 'nhra.parity')) {
+        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity required'], 403);
+    }
     $input = rsa_getJsonInput();
     $id              = isset($input['id']) ? (int)$input['id'] : null;
     $driverName      = strtoupper(trim($input['driverName'] ?? ''));
@@ -6209,7 +6213,11 @@ function handleListDriverCombos(PDO $pdo): void {
 // ============================================================================
 
 function handleUpsertDriverCombo(PDO $pdo, array $auth): void {
-    requireAdminRole($auth);
+    $userId = rsa_resolveUserId($pdo, $auth);
+    $_role  = rsa_getUserRole($pdo, $userId);
+    if (!rsa_hasCap($pdo, $userId, $_role, 'nhra.parity')) {
+        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity required'], 403);
+    }
     $input = rsa_getJsonInput();
     $id              = isset($input['id']) ? (int)$input['id'] : null;
     $driverName      = strtoupper(trim($input['driverName'] ?? ''));
@@ -6546,7 +6554,11 @@ function handleDriversAtEvent(PDO $pdo): void {
 // ============================================================================
 
 function handleBulkUpsertDriverCombos(PDO $pdo, array $auth): void {
-    requireAdminRole($auth);
+    $userId = rsa_resolveUserId($pdo, $auth);
+    $_role  = rsa_getUserRole($pdo, $userId);
+    if (!rsa_hasCap($pdo, $userId, $_role, 'nhra.parity')) {
+        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity required'], 403);
+    }
     $input = rsa_getJsonInput();
     $items = $input['items'] ?? [];
     if (!is_array($items) || count($items) === 0) {

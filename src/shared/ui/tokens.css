@@ -2,9 +2,9 @@
 
 /* NHRA Brand palette */
 :root {
-  --nhra-red:   #E61E2E;
+  --nhra-red:   #fc1922;
   --nhra-white: #FFFFFF;
-  --nhra-blue:  #262E87;
+  --nhra-blue:  #172b84;
   --nhra-black: #000000;
 }
 
@@ -19,7 +19,7 @@
   --color-muted: #6c757d;
   --color-primary: var(--nhra-blue);
   --color-accent: var(--nhra-red);
-  --color-accent-hover: #c01020;
+  --color-accent-hover: #d4141c;
   --color-border: #dee2e6;
   --color-error: #dc3545;
   --color-success: #28a745;
@@ -58,7 +58,7 @@
   --size-container: 1100px;
 
   /* Header — NHRA blue */
-  --color-header-bg: var(--nhra-blue);
+  --color-header-bg: #172b84;
   --color-header-text: #ffffff;
 }
 
@@ -73,7 +73,7 @@
   --color-muted: #adb5bd;
   --color-primary: #4a56d4;
   --color-accent: var(--nhra-red);
-  --color-accent-hover: #c01020;
+  --color-accent-hover: #d4141c;
   --color-border: #495057;
   --color-error: #f56565;
   --color-success: #48bb78;
@@ -112,7 +112,7 @@
   --size-container: 1100px;
 
   /* Header — dark navy */
-  --color-header-bg: #1a1f5c;
+  --color-header-bg: #0f1d5a;
   --color-header-text: #e9ecef;
 }
 

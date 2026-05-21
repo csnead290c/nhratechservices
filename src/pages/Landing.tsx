@@ -1,10 +1,13 @@
 import { Link } from 'react-router-dom';
+import { useTheme } from '../shared/ui/theme';
 
 /**
  * Public landing page for unauthenticated users on nhratechservices.com.
  * Clean NHRA Technical Services branding only — no RSA/racer content.
  */
 export default function Landing() {
+  const { theme } = useTheme();
+  const logoSrc = theme === 'dark' ? '/nhra-tech-services-logo-dark.svg' : '/nhra-tech-services-logo-light.svg';
   return (
     <div
       data-testid="nhrats-landing"
@@ -21,7 +24,7 @@ export default function Landing() {
       }}
     >
       <img
-        src="/nhra-tech-services-logo.svg"
+        src={logoSrc}
         alt="NHRA Tech Services"
         style={{ height: '72px', marginBottom: '28px' }}
       />

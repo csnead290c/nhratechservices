@@ -9,7 +9,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.247Z"
   },
   {
     "name": "parity_runs_raw",
@@ -21,7 +21,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_run_imports",
@@ -33,7 +33,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_engine_combos",
@@ -45,7 +45,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_driver_combos",
@@ -57,7 +57,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_events",
@@ -69,7 +69,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_tracks",
@@ -81,7 +81,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_weather_canonical",
@@ -93,7 +93,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_weather_samples",
@@ -105,7 +105,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_class_aliases",
@@ -117,7 +117,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_class_defaults",
@@ -129,7 +129,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_body_styles",
@@ -141,7 +141,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "parity_driver_body_styles",
@@ -153,7 +153,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "null_race_lookups",
@@ -165,7 +165,7 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   },
   {
     "name": "current_db",
@@ -177,6 +177,6 @@
       "NHRATS_DB_USER",
       "NHRATS_DB_PASSWORD"
     ],
-    "timestamp": "2026-05-08T16:47:17.499Z"
+    "timestamp": "2026-05-13T23:52:21.248Z"
   }
 ]

@@ -8,7 +8,7 @@
       "NHRATS_SSH_USER",
       "NHRATS_SSH_API_PATH"
     ],
-    "timestamp": "2026-05-08T16:47:17.545Z"
+    "timestamp": "2026-05-13T23:52:21.341Z"
   },
   {
     "name": "FRONTEND_URL",
@@ -19,7 +19,7 @@
       "NHRATS_SSH_USER",
       "NHRATS_SSH_API_PATH"
     ],
-    "timestamp": "2026-05-08T16:47:17.546Z"
+    "timestamp": "2026-05-13T23:52:21.342Z"
   },
   {
     "name": "JWT_SECRET (exists)",
@@ -30,7 +30,7 @@
       "NHRATS_SSH_USER",
       "NHRATS_SSH_API_PATH"
     ],
-    "timestamp": "2026-05-08T16:47:17.546Z"
+    "timestamp": "2026-05-13T23:52:21.342Z"
   },
   {
     "name": "JWT_SECRET (not default)",
@@ -41,7 +41,7 @@
       "NHRATS_SSH_USER",
       "NHRATS_SSH_API_PATH"
     ],
-    "timestamp": "2026-05-08T16:47:17.546Z"
+    "timestamp": "2026-05-13T23:52:21.342Z"
   },
   {
     "name": "JWT_SECRET (non-empty)",
@@ -52,6 +52,6 @@
       "NHRATS_SSH_USER",
       "NHRATS_SSH_API_PATH"
     ],
-    "timestamp": "2026-05-08T16:47:17.546Z"
+    "timestamp": "2026-05-13T23:52:21.342Z"
   }
 ]
