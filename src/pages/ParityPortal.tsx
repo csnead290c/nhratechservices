@@ -435,18 +435,40 @@ export default function ParityPortal() {
   // Auth error state for showing login prompt
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const loadEvents = useCallback(async (year: number) => {
+  const loadEvents = useCallback(async (year: number, division: string) => {
     setEventsLoading(true);
     setAuthError(null);
     try {
-      // Load current year AND previous year to support multi-event parity spanning years
-      const [currentYearRes, prevYearRes] = await Promise.all([
-        parityApi.eventsWithStats(year),
-        parityApi.eventsWithStats(year - 1),
-      ]);
-      // Combine and sort by date descending
-      const allEvents = [...currentYearRes.events, ...prevYearRes.events]
-        .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
+      let allEvents: EventWithStats[];
+      if (division === 'nationals') {
+        // Load current year AND previous year to support multi-event parity spanning years
+        const [currentYearRes, prevYearRes] = await Promise.all([
+          parityApi.eventsWithStats(year),
+          parityApi.eventsWithStats(year - 1),
+        ]);
+        allEvents = [...currentYearRes.events, ...prevYearRes.events]
+          .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
+      } else {
+        // Divisional: fetch from div DB for this year
+        const divRes = await divApi.listDivEvents({ year, division });
+        allEvents = divRes.events.map(e => ({
+          id: e.id,
+          event_name: e.event_name,
+          event_code: e.event_code ?? null,
+          season_year: e.season_year ?? null,
+          track_id: e.track_id,
+          track_name: e.track_name,
+          timezone_iana: e.timezone_iana,
+          city: e.city ?? null,
+          state: e.state ?? null,
+          start_date_local: e.start_date_local,
+          end_date_local: e.end_date_local,
+          race_lookup: e.race_lookup ?? '',
+          created_at: e.start_date_local,
+          run_count: e.run_count,
+          weather_sample_count: 0,
+        } as EventWithStats));
+      }
       setEvents(allEvents);
       const yearEvents = allEvents.filter(e => e.start_date_local.startsWith(String(year)));
       const selectedIsInYear = yearEvents.some(e => e.id === selectedEventId);
@@ -456,11 +478,14 @@ export default function ParityPortal() {
         if (best) {
           setSelectedEventId(best.id);
           setRaceLookup(best.race_lookup || '');
+        } else {
+          setSelectedEventId(null);
         }
+      } else if (allEvents.length === 0) {
+        setSelectedEventId(null);
       }
     } catch (e: any) {
       console.error('[loadEvents] Failed to load events:', e);
-      // Detect auth errors and show user-friendly message
       const errorMsg = e?.message || String(e);
       if (errorMsg.includes('401') || errorMsg.includes('Unauthorized') || errorMsg.includes('403')) {
         setAuthError('Session expired or unauthorized. Please log in again to access parity data.');
@@ -470,17 +495,20 @@ export default function ParityPortal() {
     setDefaultResolved(true);
   }, [selectedEventId]);
 
-  useEffect(() => { loadEvents(selectedYear); }, [selectedYear, loadEvents]);
+  useEffect(() => { loadEvents(selectedYear, selectedDivision); }, [selectedYear, selectedDivision, loadEvents]);
 
   // Load event categories whenever selected event changes
   useEffect(() => {
     if (!selectedEventId) { setEventCategories([]); return; }
     let cancelled = false;
-    parityApi.eventCategories(selectedEventId).then(res => {
+    const fetcher = selectedDivision === 'nationals'
+      ? parityApi.eventCategories(selectedEventId)
+      : divApi.divEventCategories(selectedEventId).then(r => ({ categories: r.categories as any[] }));
+    fetcher.then(res => {
       if (!cancelled) setEventCategories(res.categories);
     }).catch(() => { if (!cancelled) setEventCategories([]); });
     return () => { cancelled = true; };
-  }, [selectedEventId]);
+  }, [selectedEventId, selectedDivision]);
 
   const handleRefreshEventData = useCallback(async () => {
     if (!selectedEventId || refreshingPhase1) return;
@@ -495,7 +523,7 @@ export default function ParityPortal() {
       timingRes = await parityApi.refreshTimingOnly(selectedEventId);
       // UI updates immediately with fresh timing data
       setRefreshKey(k => k + 1);
-      loadEvents(selectedYear);
+      loadEvents(selectedYear, selectedDivision);
       parityApi.eventCategories(selectedEventId).then(r => setEventCategories(r.categories)).catch(() => {});
     } catch (e: any) {
       setRefreshError(e.message || 'Timing refresh failed');
@@ -733,7 +761,7 @@ export default function ParityPortal() {
 
       {/* ── Admin Panels ── */}
       {tab === 'adminTracks' && <AdminTracksPanel />}
-      {tab === 'adminEvents' && <AdminEventsPanel onRefreshEvents={() => loadEvents(selectedYear)} />}
+      {tab === 'adminEvents' && <AdminEventsPanel onRefreshEvents={() => loadEvents(selectedYear, selectedDivision)} />}
       {tab === 'classAliases' && <ClassAliasesPanel />}
       {tab === 'engineCombos' && <EngineCombosPanel />}
       {tab === 'driverCombos' && <DriverCombosPanel />}

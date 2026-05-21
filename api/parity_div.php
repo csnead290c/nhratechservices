@@ -511,6 +511,33 @@ function handleIngestDivMany(PDO $pdoDiv, int $userId, array $auth): void {
         $tzRow   = $tzStmt->fetch(PDO::FETCH_ASSOC);
         $trackTz = ($tzRow && !empty($tzRow['timezone_iana'])) ? $tzRow['timezone_iana'] : 'America/New_York';
 
+        // Auto-create placeholder event if no event exists for this raceLookup+division
+        if (!$tzRow) {
+            $evChk = $pdoDiv->prepare("SELECT id FROM div_events WHERE race_lookup = ? AND nhra_division = ?");
+            $evChk->execute([$raceLookup, $division]);
+            if (!$evChk->fetch()) {
+                // Derive date from raceLookup YYYYMMDD
+                $dateStr = substr($raceLookup, 0, 4) . '-' . substr($raceLookup, 4, 2) . '-' . substr($raceLookup, 6, 2);
+                $year    = (int)substr($raceLookup, 0, 4);
+                // Find or create a generic placeholder track for this division
+                $phTrackName = "Unknown Track ({$division})";
+                $trk = $pdoDiv->prepare("SELECT id FROM div_tracks WHERE track_name = ?");
+                $trk->execute([$phTrackName]);
+                $trkRow = $trk->fetch(PDO::FETCH_ASSOC);
+                if ($trkRow) {
+                    $placeholderTrackId = (int)$trkRow['id'];
+                } else {
+                    $pdoDiv->prepare("INSERT INTO div_tracks (track_name, timezone_iana, nhra_division) VALUES (?, 'America/New_York', ?)")
+                           ->execute([$phTrackName, $division]);
+                    $placeholderTrackId = (int)$pdoDiv->lastInsertId();
+                }
+                $pdoDiv->prepare("
+                    INSERT INTO div_events (event_name, season_year, track_id, start_date_local, end_date_local, race_lookup, nhra_division)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ")->execute(["{$division} Event {$dateStr}", $year, $placeholderTrackId, $dateStr, $dateStr, $raceLookup, $division]);
+            }
+        }
+
         if (!$force) {
             $chk = $pdoDiv->prepare("
                 SELECT uuid FROM div_run_imports
