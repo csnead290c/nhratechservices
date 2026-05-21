@@ -248,6 +248,10 @@ switch ($action) {
         if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleBulkCreateEvents($pdo, $auth);
         break;
+    case 'bulkCreateTracks':
+        if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleBulkCreateTracks($pdo, $auth);
+        break;
     case 'listClassAliases':
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleListClassAliases($pdo);
@@ -1638,6 +1642,12 @@ function handleCreateTrack(PDO $pdo): void {
     $input = rsa_getJsonInput();
     $name = trim($input['trackName'] ?? '');
     $tz = trim($input['timezoneIana'] ?? 'America/New_York');
+    $division = isset($input['nhraDivision']) ? trim((string)$input['nhraDivision']) : null;
+    $city = isset($input['city']) ? trim($input['city']) : null;
+    $state = isset($input['state']) ? trim($input['state']) : null;
+    $zip = isset($input['zip']) ? trim($input['zip']) : null;
+    $lat = isset($input['latitude']) ? (float)$input['latitude'] : null;
+    $lon = isset($input['longitude']) ? (float)$input['longitude'] : null;
 
     if (empty($name)) {
         rsa_jsonResponse(['error' => 'trackName is required'], 400);
@@ -1651,8 +1661,8 @@ function handleCreateTrack(PDO $pdo): void {
     }
 
     try {
-        $stmt = $pdo->prepare("INSERT INTO parity_tracks (track_name, timezone_iana) VALUES (?, ?)");
-        $stmt->execute([$name, $tz]);
+        $stmt = $pdo->prepare("INSERT INTO parity_tracks (track_name, timezone_iana, nhra_division, city, state, zip, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$name, $tz, $division, $city, $state, $zip, $lat, $lon]);
         $id = (int)$pdo->lastInsertId();
         rsa_jsonResponse(['id' => $id, 'trackName' => $name, 'timezoneIana' => $tz]);
     } catch (PDOException $e) {
@@ -1661,6 +1671,88 @@ function handleCreateTrack(PDO $pdo): void {
         }
         throw $e;
     }
+}
+
+// ============================================================================
+// POST ?action=bulkCreateTracks
+// Body: { tracks: [{ trackName, timezoneIana, nhraDivision?, city?, state?, zip?, latitude?, longitude? }], updateExisting?: bool }
+// Creates new tracks; if updateExisting=true, updates nhra_division/city/state/lat/lon on name-matched existing tracks.
+// ============================================================================
+
+function handleBulkCreateTracks(PDO $pdo, array $auth): void {
+    requireAdminRole($auth);
+    $input = rsa_getJsonInput();
+    $tracks = $input['tracks'] ?? [];
+    $updateExisting = !empty($input['updateExisting']);
+
+    if (!is_array($tracks) || count($tracks) === 0) {
+        rsa_jsonResponse(['error' => 'tracks array is required'], 400);
+    }
+
+    $results = [];
+    $created = 0;
+    $updated = 0;
+    $skipped = 0;
+
+    foreach ($tracks as $i => $t) {
+        $name = trim($t['trackName'] ?? '');
+        if (empty($name)) {
+            $results[] = ['index' => $i, 'status' => 'error', 'error' => 'trackName required'];
+            continue;
+        }
+        $tz = trim($t['timezoneIana'] ?? 'America/New_York');
+        $division = isset($t['nhraDivision']) ? trim((string)$t['nhraDivision']) : null;
+        $city = isset($t['city']) ? trim($t['city']) : null;
+        $state = isset($t['state']) ? trim($t['state']) : null;
+        $zip = isset($t['zip']) ? trim($t['zip']) : null;
+        $lat = isset($t['latitude']) && $t['latitude'] !== null ? (float)$t['latitude'] : null;
+        $lon = isset($t['longitude']) && $t['longitude'] !== null ? (float)$t['longitude'] : null;
+
+        // Check if track already exists by name (case-insensitive)
+        $check = $pdo->prepare("SELECT id FROM parity_tracks WHERE LOWER(track_name) = LOWER(?)");
+        $check->execute([$name]);
+        $existing = $check->fetch(PDO::FETCH_ASSOC);
+
+        if ($existing) {
+            if ($updateExisting) {
+                $sets = [];
+                $params = [];
+                if ($division !== null) { $sets[] = 'nhra_division = ?'; $params[] = $division; }
+                if ($city !== null)     { $sets[] = 'city = ?';          $params[] = $city; }
+                if ($state !== null)    { $sets[] = 'state = ?';         $params[] = $state; }
+                if ($lat !== null)      { $sets[] = 'latitude = ?';      $params[] = $lat; }
+                if ($lon !== null)      { $sets[] = 'longitude = ?';     $params[] = $lon; }
+                if (!empty($sets)) {
+                    $params[] = (int)$existing['id'];
+                    $pdo->prepare("UPDATE parity_tracks SET " . implode(', ', $sets) . " WHERE id = ?")->execute($params);
+                }
+                $results[] = ['index' => $i, 'trackName' => $name, 'id' => (int)$existing['id'], 'status' => 'updated'];
+                $updated++;
+            } else {
+                $results[] = ['index' => $i, 'trackName' => $name, 'id' => (int)$existing['id'], 'status' => 'skipped_existing'];
+                $skipped++;
+            }
+            continue;
+        }
+
+        try {
+            $stmt = $pdo->prepare("INSERT INTO parity_tracks (track_name, timezone_iana, nhra_division, city, state, zip, latitude, longitude) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+            $stmt->execute([$name, $tz, $division, $city, $state, $zip, $lat, $lon]);
+            $id = (int)$pdo->lastInsertId();
+            $results[] = ['index' => $i, 'trackName' => $name, 'id' => $id, 'status' => 'created'];
+            $created++;
+        } catch (PDOException $e) {
+            $results[] = ['index' => $i, 'trackName' => $name, 'status' => 'error', 'error' => $e->getMessage()];
+        }
+    }
+
+    rsa_jsonResponse([
+        'ok' => true,
+        'created' => $created,
+        'updated' => $updated,
+        'skipped' => $skipped,
+        'results' => $results,
+    ]);
 }
 
 // ============================================================================
@@ -5576,7 +5668,7 @@ function handleRunsByDriver(PDO $pdo): void {
 function handleListTracksWithStats(PDO $pdo): void {
     $stmt = $pdo->prepare("
         SELECT t.id, t.track_name, t.timezone_iana, t.street, t.city, t.state, t.zip,
-               t.latitude, t.longitude, t.slope_grade_pct, t.created_at,
+               t.latitude, t.longitude, t.slope_grade_pct, t.nhra_division, t.created_at,
                COUNT(DISTINCT e.id) AS event_count,
                COALESCE(SUM(sub.run_count), 0) AS total_run_count,
                COALESCE(SUM(sub.weather_sample_count), 0) AS total_weather_samples
@@ -5624,7 +5716,7 @@ function handleUpdateTrack(PDO $pdo, array $auth): void {
     $stmt->execute([$trackId]);
     if (!$stmt->fetch()) rsa_jsonResponse(['error' => 'Track not found'], 404);
 
-    $updatable = ['track_name', 'timezone_iana', 'street', 'city', 'state', 'zip'];
+    $updatable = ['track_name', 'timezone_iana', 'street', 'city', 'state', 'zip', 'nhra_division'];
     $sets = [];
     $params = [];
     foreach ($updatable as $col) {

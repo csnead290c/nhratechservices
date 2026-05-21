@@ -626,10 +626,30 @@ export interface TrackWithStats {
   latitude: number | null;
   longitude: number | null;
   slope_grade_pct: number | null;
+  nhra_division: string | null;
   created_at: string;
   event_count: number;
   total_run_count: number;
   total_weather_samples: number;
+}
+
+export interface BulkCreateTrackRow {
+  trackName: string;
+  timezoneIana?: string;
+  nhraDivision?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+}
+
+export interface BulkCreateTracksResponse {
+  ok: boolean;
+  created: number;
+  updated: number;
+  skipped: number;
+  results: { index: number; trackName?: string; id?: number; status: string; error?: string }[];
 }
 
 export interface TracksWithStatsResponse {
@@ -2411,6 +2431,13 @@ export const parityApi = {
 
   async mergeTracks(params: { sourceTrackId: number; targetTrackId: number }): Promise<{ ok: boolean; sourceTrackId: number; targetTrackId: number; eventsMoved: number }> {
     return parityRequest<{ ok: boolean; sourceTrackId: number; targetTrackId: number; eventsMoved: number }>('/parity.php?action=mergeTracks', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  async bulkCreateTracks(params: { tracks: BulkCreateTrackRow[]; updateExisting?: boolean }): Promise<BulkCreateTracksResponse> {
+    return parityRequest<BulkCreateTracksResponse>('/parity.php?action=bulkCreateTracks', {
       method: 'POST',
       body: JSON.stringify(params),
     });

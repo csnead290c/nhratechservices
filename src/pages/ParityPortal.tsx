@@ -3522,6 +3522,7 @@ function AdminTracksPanel() {
       zip: t.zip || '',
       street: t.street || '',
       slope_grade_pct: t.slope_grade_pct != null ? String(t.slope_grade_pct) : '',
+      nhra_division: t.nhra_division || '',
     });
   };
 
@@ -3586,6 +3587,7 @@ function AdminTracksPanel() {
           <thead>
             <tr>
               <th style={stickyTh}>ID</th>
+              <th style={stickyTh}>Div</th>
               <th style={stickyTh}>Track Name</th>
               <th style={stickyTh}>City/State</th>
               <th style={stickyTh}>Timezone</th>
@@ -3601,6 +3603,16 @@ function AdminTracksPanel() {
             {tracks.map((t, i) => (
               <tr key={t.id} style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined }}>
                 <td style={S.td}>{t.id}</td>
+                <td style={S.td}>
+                  {editId === t.id ? (
+                    <input style={{ ...S.input, width: 30 }} value={editFields.nhra_division} placeholder="Div"
+                      onChange={e => setEditFields(f => ({ ...f, nhra_division: e.target.value }))} />
+                  ) : (
+                    <span style={{ fontWeight: 600, fontSize: '0.75rem', color: t.nhra_division ? '#facc15' : 'var(--color-muted)' }}>
+                      {t.nhra_division ? `D${t.nhra_division}` : '—'}
+                    </span>
+                  )}
+                </td>
                 <td style={S.td}>
                   {editId === t.id ? (
                     <input style={{ ...S.input, width: 200 }} value={editFields.track_name}
