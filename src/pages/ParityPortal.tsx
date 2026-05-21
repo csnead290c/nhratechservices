@@ -101,6 +101,7 @@ import { canonicalLane, laneSort } from '../domain/parity/laneUtils';
 import IncidentDrawer from './IncidentDrawer';
 import IncidentCell from '../shared/components/IncidentCell';
 import { useAutoRefresh, isEventOngoing } from '../domain/parity/useAutoRefresh';
+import { divApi, DIV_CODES, type DivEventRow, type DivIngestResult, type DivSuggestResponse } from '../services/divApi';
 
 // ── Styles ──────────────────────────────────────────────────────────────
 
@@ -259,7 +260,8 @@ type Tab = 'eventRuns' | 'qualSheet' | 'driverHistory' | 'rtAnalysis' | 'trends'
   | 'parity' | 'ladder' | 'peek' | 'ingest' | 'query' | 'imports' | 'weather' | 'runsWeather' | 'backfill'
   | 'adminTracks' | 'adminEvents' | 'classAliases' | 'engineCombos' | 'driverCombos' | 'assignCombos'
   | 'weatherCorrection' | 'backfillWeather' | 'weatherHealth' | 'importStationCsv'
-  | 'trackCoords' | 'batchBackfill' | 'timeDiagnostics' | 'bodyStyleDefs' | 'driverBodyStyles' | 'slopeAnalysis';
+  | 'trackCoords' | 'batchBackfill' | 'timeDiagnostics' | 'bodyStyleDefs' | 'driverBodyStyles' | 'slopeAnalysis'
+  | 'divAdmin';
 
 // Recommended categories shown at the top of the category selector (human-readable names)
 const RECOMMENDED_CATEGORIES = ['Top Fuel', 'Funny Car', 'Pro Stock', 'Pro Stock Motorcycle', 'Pro Mod', 'Top Alcohol Dragster', 'Top Alcohol Funny Car'] as const;
@@ -304,6 +306,7 @@ const ADMIN_TABS: { key: Tab; label: string }[] = [
   { key: 'bodyStyleDefs', label: 'Body Styles' },
   { key: 'driverBodyStyles', label: 'Driver Body Styles' },
   { key: 'slopeAnalysis', label: 'Slope Analysis' },
+  { key: 'divAdmin', label: 'Div Admin' },
 ];
 
 // ── Refresh Result Banner ────────────────────────────────────────────────
@@ -407,6 +410,7 @@ export default function ParityPortal() {
   // Event picker state (shared across tabs)
   const [events, setEvents] = useState<EventWithStats[]>([]);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+  const [selectedDivision, setSelectedDivision] = useState<'nationals' | string>('nationals');
   const [selectedEventId, setSelectedEventId] = useState<number | null>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
   const [_defaultResolved, setDefaultResolved] = useState(false); // tracks if initial event resolved
@@ -599,6 +603,11 @@ export default function ParityPortal() {
           onChange={e => setSelectedYear(Number(e.target.value))}>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
         </select>
+        <select style={{ ...S.input, width: 90, fontSize: '0.8rem' }} value={selectedDivision}
+          onChange={e => { setSelectedDivision(e.target.value); setSelectedEventId(null); }}>
+          <option value="nationals">Nationals</option>
+          {DIV_CODES.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
         <select style={{ ...S.input, flex: '1 1 250px', minWidth: 0, fontSize: '0.8rem' }} value={selectedEventId ?? ''}
           onChange={e => handleEventChange(Number(e.target.value))}
           disabled={eventsLoading || events.length === 0}>
@@ -748,6 +757,7 @@ export default function ParityPortal() {
       {tab === 'batchBackfill' && <BatchBackfillPanel />}
       {tab === 'bodyStyleDefs' && <BodyStyleDefsPanel />}
       {tab === 'driverBodyStyles' && <DriverBodyStylesPanel />}
+      {tab === 'divAdmin' && <DivAdminPanel />}
     </div>
   );
 }
@@ -8996,6 +9006,566 @@ function SlopeAnalysisPanel({ events }: { events: EventWithStats[] }) {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Div Admin Panel ──────────────────────────────────────────────────────────
+
+type DivAdminSubTab = 'events' | 'ingest' | 'scrape' | 'discover';
+
+function DivAdminPanel() {
+  const [subTab, setSubTab] = useState<DivAdminSubTab>('events');
+
+  const subTabs: { key: DivAdminSubTab; label: string }[] = [
+    { key: 'events',   label: 'Div Events' },
+    { key: 'ingest',   label: 'Batch Ingest' },
+    { key: 'scrape',   label: 'Schedule Scraper' },
+    { key: 'discover', label: 'Discovery' },
+  ];
+
+  return (
+    <div style={S.card}>
+      <div style={{ marginBottom: '0.75rem' }}>
+        <strong style={{ fontSize: '1rem' }}>Divisional Admin</strong>
+        <span style={{ marginLeft: '0.75rem', fontSize: '0.75rem', color: 'var(--color-muted)' }}>
+          Separate database: div_runs, div_events, div_tracks
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: '0.35rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+        {subTabs.map(t => (
+          <button
+            key={t.key}
+            style={{ ...S.btn(subTab === t.key ? 'primary' : 'secondary'), fontSize: '0.75rem', padding: '0.2rem 0.6rem' }}
+            onClick={() => setSubTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {subTab === 'events'   && <DivEventsSubPanel />}
+      {subTab === 'ingest'   && <DivBatchIngestSubPanel />}
+      {subTab === 'scrape'   && <DivScheduleScrapeSubPanel />}
+      {subTab === 'discover' && <DivDiscoverySubPanel />}
+    </div>
+  );
+}
+
+// ── Div Events Sub-Panel ────────────────────────────────────────────────────
+
+function DivEventsSubPanel() {
+  const [events, setEvents] = useState<DivEventRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [filterYear, setFilterYear] = useState(new Date().getFullYear());
+  const [filterDiv, setFilterDiv] = useState('');
+  const [editRow, setEditRow] = useState<Partial<DivEventRow> | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [ingestingId, setIngestingId] = useState<number | null>(null);
+  const [ingestResult, setIngestResult] = useState<{ id: number; res: DivIngestResult } | null>(null);
+
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try {
+      const r = await divApi.listDivEvents({ year: filterYear, division: filterDiv || undefined });
+      setEvents(r.events);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  }, [filterYear, filterDiv]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const years = Array.from({ length: 2026 - 2018 + 1 }, (_, i) => 2018 + i).reverse();
+
+  const handleSave = async () => {
+    if (!editRow) return;
+    setSaving(true); setError('');
+    try {
+      if (editRow.id) {
+        await divApi.updateDivEvent({
+          id: editRow.id,
+          eventName: editRow.event_name,
+          startDateLocal: editRow.start_date_local,
+          endDateLocal: editRow.end_date_local,
+          division: editRow.nhra_division,
+          seasonYear: editRow.season_year ?? undefined,
+          eventCode: editRow.event_code ?? undefined,
+        });
+      } else {
+        await divApi.createDivEvent({
+          eventName: editRow.event_name!,
+          trackName: editRow.track_name!,
+          startDateLocal: editRow.start_date_local!,
+          endDateLocal: editRow.end_date_local!,
+          division: editRow.nhra_division!,
+          seasonYear: editRow.season_year ?? undefined,
+          timezoneIana: editRow.timezone_iana ?? undefined,
+        });
+      }
+      setEditRow(null);
+      load();
+    } catch (e: any) { setError(e.message); }
+    setSaving(false);
+  };
+
+  const handleIngest = async (ev: DivEventRow) => {
+    setIngestingId(ev.id); setIngestResult(null);
+    try {
+      const res = await divApi.ingestDivEventRuns({ eventId: ev.id });
+      setIngestResult({ id: ev.id, res });
+      load();
+    } catch (e: any) { setError(e.message); }
+    setIngestingId(null);
+  };
+
+  return (
+    <div>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+        <select style={{ ...S.input, width: 80, fontSize: '0.8rem' }} value={filterYear}
+          onChange={e => setFilterYear(Number(e.target.value))}>
+          {years.map(y => <option key={y} value={y}>{y}</option>)}
+        </select>
+        <select style={{ ...S.input, width: 120, fontSize: '0.8rem' }} value={filterDiv}
+          onChange={e => setFilterDiv(e.target.value)}>
+          <option value="">All Divisions</option>
+          {DIV_CODES.map(d => <option key={d} value={d}>{d}</option>)}
+        </select>
+        <button style={{ ...S.btn('primary'), fontSize: '0.75rem' }} onClick={load}>Refresh</button>
+        <button style={{ ...S.btn('secondary'), fontSize: '0.75rem', marginLeft: 'auto' }}
+          onClick={() => setEditRow({ nhra_division: 'D1', season_year: filterYear })}>
+          + Add Event
+        </button>
+      </div>
+      {error && <div style={S.error}>{error}</div>}
+      {ingestResult && (
+        <div style={{ ...S.card, background: 'rgba(50,180,80,0.1)', fontSize: '0.75rem', marginBottom: '0.5rem', padding: '0.4rem 0.6rem' }}>
+          ✓ {ingestResult.res.raceLookup} ({ingestResult.res.division}): {ingestResult.res.rowsFetched} fetched,{' '}
+          {ingestResult.res.rowsInserted} inserted
+          {ingestResult.res.skipped && ' (skipped — already imported)'}
+          <button style={{ ...S.btn, marginLeft: '0.5rem', fontSize: '0.65rem', padding: '0.1rem 0.3rem' }}
+            onClick={() => setIngestResult(null)}>✕</button>
+        </div>
+      )}
+      {editRow && (
+        <div style={{ ...S.card, background: 'rgba(60,120,200,0.08)', marginBottom: '0.75rem', padding: '0.75rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem', alignItems: 'flex-end' }}>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Event Name
+            <input style={{ ...S.input, width: 220 }} value={editRow.event_name || ''}
+              onChange={e => setEditRow(r => ({ ...r!, event_name: e.target.value }))} />
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Track Name
+            <input style={{ ...S.input, width: 180 }} value={editRow.track_name || ''}
+              onChange={e => setEditRow(r => ({ ...r!, track_name: e.target.value }))}
+              placeholder="Will create if new" />
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Division
+            <select style={{ ...S.input, width: 80 }} value={editRow.nhra_division || 'D1'}
+              onChange={e => setEditRow(r => ({ ...r!, nhra_division: e.target.value }))}>
+              {DIV_CODES.map(d => <option key={d} value={d}>{d}</option>)}
+            </select>
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Start Date
+            <input style={{ ...S.input, width: 130 }} type="date" value={editRow.start_date_local || ''}
+              onChange={e => setEditRow(r => ({ ...r!, start_date_local: e.target.value }))} />
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            End Date
+            <input style={{ ...S.input, width: 130 }} type="date" value={editRow.end_date_local || ''}
+              onChange={e => setEditRow(r => ({ ...r!, end_date_local: e.target.value }))} />
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Year
+            <input style={{ ...S.input, width: 70 }} type="number" value={editRow.season_year || ''}
+              onChange={e => setEditRow(r => ({ ...r!, season_year: Number(e.target.value) }))} />
+          </label>
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Timezone
+            <input style={{ ...S.input, width: 200 }} value={editRow.timezone_iana || 'America/New_York'}
+              onChange={e => setEditRow(r => ({ ...r!, timezone_iana: e.target.value }))}
+              placeholder="America/New_York" />
+          </label>
+          <div style={{ display: 'flex', gap: '0.4rem' }}>
+            <button style={{ ...S.btn('primary'), fontSize: '0.75rem' }} onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button style={{ ...S.btn('secondary'), fontSize: '0.75rem' }} onClick={() => setEditRow(null)}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+      {loading ? (
+        <div style={{ color: 'var(--color-muted)', fontSize: '0.8rem' }}>Loading events…</div>
+      ) : (
+        <div style={{ overflowX: 'auto' }}>
+          <table style={S.table}>
+            <thead>
+              <tr>
+                <th style={S.th}>Div</th>
+                <th style={S.th}>Event</th>
+                <th style={S.th}>Track</th>
+                <th style={S.th}>Dates</th>
+                <th style={S.th}>Race Lookup</th>
+                <th style={{ ...S.th, textAlign: 'right' }}>Runs</th>
+                <th style={S.th}>Last Import</th>
+                <th style={S.th}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {events.map((ev, i) => (
+                <tr key={ev.id} style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined }}>
+                  <td style={S.td}>
+                    <span style={{ fontSize: '0.72rem', background: '#334', padding: '0.1rem 0.4rem', borderRadius: 3 }}>
+                      {ev.nhra_division}
+                    </span>
+                  </td>
+                  <td style={S.td}>{ev.event_name}</td>
+                  <td style={S.td}>{ev.track_name}{ev.city ? `, ${ev.city}` : ''}{ev.state ? ` ${ev.state}` : ''}</td>
+                  <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{ev.start_date_local} → {ev.end_date_local}</td>
+                  <td style={{ ...S.td, fontFamily: 'monospace', fontSize: '0.75rem' }}>{ev.race_lookup || '—'}</td>
+                  <td style={{ ...S.td, textAlign: 'right' }}>{ev.run_count}</td>
+                  <td style={{ ...S.td, fontSize: '0.7rem', color: 'var(--color-muted)' }}>
+                    {ev.last_imported_at ? ev.last_imported_at.slice(0, 16) : '—'}
+                  </td>
+                  <td style={S.td}>
+                    <div style={{ display: 'flex', gap: '0.3rem' }}>
+                      <button style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}
+                        onClick={() => setEditRow({ ...ev })}>Edit</button>
+                      <button
+                        style={{ ...S.btn('primary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem', opacity: ingestingId === ev.id ? 0.6 : 1 }}
+                        onClick={() => handleIngest(ev)}
+                        disabled={ingestingId === ev.id || !ev.race_lookup}
+                        title={ev.race_lookup ? 'Fetch OData and upsert runs' : 'No race_lookup set'}
+                      >
+                        {ingestingId === ev.id ? '…' : '↓ Ingest'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {events.length === 0 && (
+                <tr><td colSpan={8} style={{ ...S.td, color: 'var(--color-muted)', textAlign: 'center' }}>No divisional events found</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Div Batch Ingest Sub-Panel ──────────────────────────────────────────────
+
+function DivBatchIngestSubPanel() {
+  const [division, setDivision] = useState('D2');
+  const [rawLookups, setRawLookups] = useState('');
+  const [force, setForce] = useState(false);
+  const [throttleMs, setThrottleMs] = useState(1000);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState('');
+
+  const handleIngestMany = async () => {
+    const lines = rawLookups.split(/[\n,]+/).map(s => s.trim()).filter(s => /^\d{8}$/.test(s));
+    if (!lines.length) { setError('Enter at least one valid YYYYMMDD race lookup'); return; }
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await divApi.ingestDivMany({
+        items: lines.map(rl => ({ raceLookup: rl, division })),
+        force,
+        throttleMs,
+      });
+      setResult(res);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxWidth: 560 }}>
+      <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
+        Batch-ingest multiple divisional race lookups. Enter one YYYYMMDD per line (or comma-separated).
+      </p>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Division
+          <select style={{ ...S.input, width: 80 }} value={division} onChange={e => setDivision(e.target.value)}>
+            {DIV_CODES.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Throttle (ms)
+          <input style={{ ...S.input, width: 80 }} type="number" min={500} max={5000} step={100}
+            value={throttleMs} onChange={e => setThrottleMs(Number(e.target.value))} />
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          <input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} />
+          Force re-import
+        </label>
+      </div>
+      <textarea
+        style={{ ...S.input, height: 140, fontFamily: 'monospace', fontSize: '0.8rem', resize: 'vertical' }}
+        placeholder={'20260501\n20260502\n20260503'}
+        value={rawLookups}
+        onChange={e => setRawLookups(e.target.value)}
+      />
+      <button style={{ ...S.btn('primary'), fontSize: '0.8rem', alignSelf: 'flex-start' }}
+        onClick={handleIngestMany} disabled={loading}>
+        {loading ? 'Ingesting…' : `↓ Ingest (${rawLookups.split(/[\n,]+/).filter(s => /^\d{8}$/.test(s.trim())).length} lookups)`}
+      </button>
+      {error && <div style={S.error}>{error}</div>}
+      {result && (
+        <div style={{ ...S.card, fontSize: '0.78rem' }}>
+          <strong>Summary:</strong> {result.summary.success} success, {result.summary.skipped} skipped,{' '}
+          {result.summary.empty} empty, {result.summary.error} error,{' '}
+          {result.summary.totalRowsInserted} rows inserted
+          <details style={{ marginTop: '0.4rem' }}>
+            <summary style={{ cursor: 'pointer', color: 'var(--color-muted)' }}>Per-item results</summary>
+            <table style={{ ...S.table, marginTop: '0.3rem' }}>
+              <thead>
+                <tr>
+                  <th style={S.th}>Lookup</th>
+                  <th style={S.th}>Div</th>
+                  <th style={S.th}>Status</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>Fetched</th>
+                  <th style={{ ...S.th, textAlign: 'right' }}>Inserted</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.results.map((r: DivIngestResult, i: number) => (
+                  <tr key={i} style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined }}>
+                    <td style={{ ...S.td, fontFamily: 'monospace' }}>{r.raceLookup}</td>
+                    <td style={S.td}>{r.division}</td>
+                    <td style={{ ...S.td, color: r.status === 'error' ? '#e44' : r.status === 'skipped' ? '#888' : undefined }}>{r.status}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{r.rowsFetched}</td>
+                    <td style={{ ...S.td, textAlign: 'right' }}>{r.rowsInserted}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Div Schedule Scraper Sub-Panel ─────────────────────────────────────────
+
+function DivScheduleScrapeSubPanel() {
+  const [yearStart, setYearStart] = useState(new Date().getFullYear());
+  const [yearEnd, setYearEnd] = useState(new Date().getFullYear());
+  const [force, setForce] = useState(false);
+  const [throttleMs, setThrottleMs] = useState(1000);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState('');
+
+  const handleScrape = async () => {
+    setLoading(true); setError(''); setResult(null);
+    try {
+      const res = await divApi.scrapeDivSchedule({ yearStart, yearEnd, force, throttleMs });
+      setResult(res);
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  };
+
+  const years = Array.from({ length: 2026 - 2018 + 1 }, (_, i) => 2018 + i).reverse();
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxWidth: 480 }}>
+      <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
+        Scrapes <code>nhra.com/&#123;YEAR&#125;-lucas-oil-divisional-series-schedule</code> and upserts events/tracks into the divisional database.
+      </p>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Year Start
+          <select style={{ ...S.input, width: 80 }} value={yearStart}
+            onChange={e => setYearStart(Number(e.target.value))}>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Year End
+          <select style={{ ...S.input, width: 80 }} value={yearEnd}
+            onChange={e => setYearEnd(Number(e.target.value))}>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Throttle (ms)
+          <input style={{ ...S.input, width: 80 }} type="number" min={500} max={5000} step={100}
+            value={throttleMs} onChange={e => setThrottleMs(Number(e.target.value))} />
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+          <input type="checkbox" checked={force} onChange={e => setForce(e.target.checked)} />
+          Force update
+        </label>
+      </div>
+      <button style={{ ...S.btn('primary'), fontSize: '0.8rem', alignSelf: 'flex-start' }}
+        onClick={handleScrape} disabled={loading}>
+        {loading ? 'Scraping…' : '↓ Scrape Schedule'}
+      </button>
+      {error && <div style={S.error}>{error}</div>}
+      {result && (
+        <div style={{ ...S.card, fontSize: '0.78rem' }}>
+          <div>✓ Years: {result.yearsScraped.join(', ')}</div>
+          <div>Events upserted: <strong>{result.eventsUpserted}</strong> | Tracks: <strong>{result.tracksUpserted}</strong></div>
+          {result.errors.length > 0 && (
+            <div style={{ color: '#e88', marginTop: '0.3rem' }}>
+              <strong>{result.errors.length} error(s):</strong>
+              <ul style={{ margin: '0.2rem 0', paddingLeft: '1.2rem' }}>
+                {result.errors.slice(0, 20).map((e: string, i: number) => <li key={i}>{e}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Div Discovery Sub-Panel ────────────────────────────────────────────────
+
+function DivDiscoverySubPanel() {
+  const [division, setDivision] = useState('D2');
+  const [startDate, setStartDate] = useState('2018-03-01');
+  const [endDate, setEndDate] = useState(new Date().toISOString().slice(0, 10));
+  const [maxProbes, setMaxProbes] = useState(50);
+  const [throttleMs, setThrottleMs] = useState(1000);
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<DivSuggestResponse | null>(null);
+  const [error, setError] = useState('');
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+
+  const handleDiscover = async () => {
+    setLoading(true); setError(''); setResult(null); setSelected(new Set());
+    try {
+      const res = await divApi.suggestDivRaceLookups({ division, startDate, endDate, maxProbes, throttleMs });
+      setResult(res);
+      setSelected(new Set(res.found.map(f => f.raceLookup)));
+    } catch (e: any) { setError(e.message); }
+    setLoading(false);
+  };
+
+  const toggleAll = () => {
+    if (!result) return;
+    if (selected.size === result.found.length) setSelected(new Set());
+    else setSelected(new Set(result.found.map(f => f.raceLookup)));
+  };
+
+  const toggle = (rl: string) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(rl)) next.delete(rl); else next.add(rl);
+      return next;
+    });
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem', maxWidth: 600 }}>
+      <p style={{ fontSize: '0.78rem', color: 'var(--color-muted)', margin: 0 }}>
+        Auto-discover historical race lookups by probing the OData API (Fri/Sat/Sun, Mar–Oct, 2018–present).
+        Throttled at 1 req/sec. Use the resume date to page through results.
+      </p>
+      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Division
+          <select style={{ ...S.input, width: 100 }} value={division} onChange={e => setDivision(e.target.value)}>
+            {DIV_CODES.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Start Date
+          <input style={{ ...S.input, width: 130 }} type="date" value={startDate}
+            onChange={e => setStartDate(e.target.value)} />
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          End Date
+          <input style={{ ...S.input, width: 130 }} type="date" value={endDate}
+            onChange={e => setEndDate(e.target.value)} />
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Max Probes
+          <input style={{ ...S.input, width: 70 }} type="number" min={10} max={200} step={10}
+            value={maxProbes} onChange={e => setMaxProbes(Number(e.target.value))} />
+        </label>
+        <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+          Throttle (ms)
+          <input style={{ ...S.input, width: 80 }} type="number" min={800} max={3000} step={100}
+            value={throttleMs} onChange={e => setThrottleMs(Number(e.target.value))} />
+        </label>
+      </div>
+      <button style={{ ...S.btn('primary'), fontSize: '0.8rem', alignSelf: 'flex-start' }}
+        onClick={handleDiscover} disabled={loading}>
+        {loading ? 'Probing…' : '🔍 Discover'}
+      </button>
+      {error && <div style={S.error}>{error}</div>}
+      {result && (
+        <div>
+          <div style={{ fontSize: '0.78rem', marginBottom: '0.4rem', color: 'var(--color-muted)' }}>
+            Probed <strong>{result.probed}</strong> dates — found <strong>{result.found.length}</strong> with data.
+            {result.nextStartDate && (
+              <button
+                style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem', marginLeft: '0.5rem' }}
+                onClick={() => { setStartDate(result.nextStartDate!); setResult(null); }}
+              >
+                Resume from {result.nextStartDate} →
+              </button>
+            )}
+          </div>
+          {result.found.length > 0 && (
+            <>
+              <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.35rem', alignItems: 'center' }}>
+                <button style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}
+                  onClick={toggleAll}>
+                  {selected.size === result.found.length ? 'Deselect all' : 'Select all'}
+                </button>
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                  {selected.size} selected — copy to Batch Ingest to import
+                </span>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={S.table}>
+                  <thead>
+                    <tr>
+                      <th style={S.th}></th>
+                      <th style={S.th}>Race Lookup</th>
+                      <th style={S.th}>Div</th>
+                      <th style={{ ...S.th, textAlign: 'right' }}>Rows</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.found.map((f, i) => (
+                      <tr key={f.raceLookup}
+                        style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined, cursor: 'pointer' }}
+                        onClick={() => toggle(f.raceLookup)}>
+                        <td style={S.td}>
+                          <input type="checkbox" checked={selected.has(f.raceLookup)}
+                            onChange={() => toggle(f.raceLookup)} onClick={e => e.stopPropagation()} />
+                        </td>
+                        <td style={{ ...S.td, fontFamily: 'monospace' }}>{f.raceLookup}</td>
+                        <td style={S.td}>{f.division}</td>
+                        <td style={{ ...S.td, textAlign: 'right' }}>{f.rowCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: '0.4rem', fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+                Selected lookups for Batch Ingest:
+              </div>
+              <textarea
+                readOnly
+                style={{ ...S.input, height: 80, fontFamily: 'monospace', fontSize: '0.75rem', resize: 'vertical', marginTop: '0.2rem' }}
+                value={result.found.filter(f => selected.has(f.raceLookup)).map(f => f.raceLookup).join('\n')}
+              />
+            </>
+          )}
         </div>
       )}
     </div>

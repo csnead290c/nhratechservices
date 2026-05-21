@@ -848,3 +848,74 @@ function parity_generateUUID(): string {
         mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
     );
 }
+
+// ============================================================================
+// Divisional OData Client
+// ============================================================================
+
+/**
+ * Fetch NHRA divisional results from the OData feed with an eventType param.
+ *
+ * URL format: GetResults/{YYYYMMDD}?eventType=D1  (D1-D7 or W for World)
+ *
+ * @param string $raceLookup  YYYYMMDD date string
+ * @param string $division    Division code: D1-D7 or W
+ * @return array  [ 'rows' => array[], 'url' => string ]
+ * @throws RuntimeException on fetch failure
+ */
+function parity_fetchODataResultsDiv(string $raceLookup, string $division): array {
+    $baseUrl = "https://odata.nhradata.com/api/oGetResults/GetResults/{$raceLookup}?eventType={$division}";
+    $url = $baseUrl;
+    $allRows = [];
+    $pageCount = 0;
+    $maxPages = 100;
+
+    while ($url && $pageCount < $maxPages) {
+        $pageCount++;
+        $response = parity_httpGet($url);
+
+        if ($response === false) {
+            throw new RuntimeException("Failed to fetch OData URL: " . parity_redactUrl($url));
+        }
+
+        $json = json_decode($response, true);
+        if ($json === null) {
+            throw new RuntimeException("Invalid JSON from OData URL: " . parity_redactUrl($url));
+        }
+
+        $rows = parity_extractRows($json);
+        $allRows = array_merge($allRows, $rows);
+
+        $url = parity_extractNextLink($json);
+    }
+
+    return [
+        'rows' => $allRows,
+        'url'  => $baseUrl,
+    ];
+}
+
+/**
+ * Probe the divisional OData endpoint with a lightweight request.
+ * Returns the row count without storing anything.
+ *
+ * @param string $raceLookup  YYYYMMDD
+ * @param string $division    D1-D7 or W
+ * @return array  [ 'rowCount' => int, 'reachable' => bool, 'error' => string|null ]
+ */
+function parity_probeDivOData(string $raceLookup, string $division): array {
+    $url = "https://odata.nhradata.com/api/oGetResults/GetResults/{$raceLookup}?eventType={$division}";
+    $result = parity_httpGetFull($url);
+
+    if ($result['body'] === false || $result['httpCode'] >= 400) {
+        return ['rowCount' => 0, 'reachable' => false, 'error' => "HTTP {$result['httpCode']}: {$result['error']}"];
+    }
+
+    $json = json_decode($result['body'], true);
+    if ($json === null) {
+        return ['rowCount' => 0, 'reachable' => false, 'error' => 'Invalid JSON'];
+    }
+
+    $rows = parity_extractRows($json);
+    return ['rowCount' => count($rows), 'reachable' => true, 'error' => null];
+}
