@@ -346,6 +346,33 @@ export const divApi = {
     });
   },
 
+  // ── Runs with weather (EventRuns / LiveTiming) ───────────────────────
+
+  async runsWithWeather(params: {
+    raceLookup?: string;
+    eventId?: number;
+    category?: string;
+    classIndex?: string;
+    driverName?: string;
+    lane?: string;
+    round?: string;
+    limit?: number;
+    offset?: number;
+  }): Promise<import('./parityApi').RunsWithWeatherResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divRunsWithWeather');
+    if (params.raceLookup) qs.set('raceLookup', params.raceLookup);
+    if (params.eventId)    qs.set('eventId', String(params.eventId));
+    if (params.category)   qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.driverName) qs.set('driverName', params.driverName);
+    if (params.lane)       qs.set('lane', params.lane);
+    if (params.round)      qs.set('round', params.round);
+    if (params.limit)      qs.set('limit', String(params.limit));
+    if (params.offset)     qs.set('offset', String(params.offset));
+    return divRequest<import('./parityApi').RunsWithWeatherResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
   // ── Analysis endpoints (divisional equivalents) ───────────────────────
 
   async anomalyAnalysis(params: {

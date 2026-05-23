@@ -82,6 +82,11 @@ try {
             handleDivRuns($pdoDiv);
             break;
 
+        case 'divRunsWithWeather':
+            if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handleDivRunsWithWeather($pdoDiv);
+            break;
+
         // ── Admin write endpoints ───────────────────────────────────────────
         case 'createDivEvent':
             if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
@@ -2150,5 +2155,137 @@ function handleDivWeatherTimeseries(PDO $pdoDiv): void {
         'endUtc' => $endUtc,
         'points' => $points,
         'stats' => $stats,
+    ]);
+}
+
+// ============================================================================
+// GET ?action=divRunsWithWeather
+// Returns div_runs rows joined with nearest div_weather_canonical sample.
+// Response mirrors the national runsWithWeather shape so the same frontend
+// components can render divisional data without modification.
+// ============================================================================
+
+function handleDivRunsWithWeather(PDO $pdoDiv): void {
+    $raceLookup   = trim($_GET['raceLookup'] ?? '');
+    $eventId      = isset($_GET['eventId']) ? (int)$_GET['eventId'] : 0;
+    $category     = trim($_GET['category'] ?? '');
+    $classIndex   = trim($_GET['classIndex'] ?? '');
+    $driverName   = trim($_GET['driverName'] ?? '');
+    $lane         = trim($_GET['lane'] ?? '');
+    $round        = trim($_GET['round'] ?? '');
+    $limit        = min(10000, max(1, (int)($_GET['limit'] ?? 500)));
+    $offset       = max(0, (int)($_GET['offset'] ?? 0));
+
+    // Resolve event
+    if (!$raceLookup && $eventId > 0) {
+        $ev = $pdoDiv->prepare("SELECT race_lookup, nhra_division FROM div_events WHERE id = ?");
+        $ev->execute([$eventId]);
+        $row = $ev->fetch(PDO::FETCH_ASSOC);
+        if (!$row) rsa_jsonResponse(['error' => "Event $eventId not found"], 404);
+        $raceLookup = $row['race_lookup'];
+    }
+    if (!$raceLookup) rsa_jsonResponse(['error' => 'raceLookup or eventId is required'], 400);
+
+    // Determine nhra_division from event
+    $evStmt = $pdoDiv->prepare("SELECT id, nhra_division, timezone_iana FROM div_events WHERE race_lookup = ? LIMIT 1");
+    $evStmt->execute([$raceLookup]);
+    $evRow = $evStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$evRow) rsa_jsonResponse(['error' => "No event found for raceLookup $raceLookup"], 404);
+    $division = $evRow['nhra_division'];
+
+    // Build run filter
+    $where  = ['r.race_lookup = ?', 'r.nhra_division = ?'];
+    $params = [$raceLookup, $division];
+
+    if ($category)    { $where[] = 'r.category = ?';            $params[] = $category; }
+    elseif ($classIndex) { $where[] = 'r.class_index = ?';      $params[] = $classIndex; }
+    if ($driverName)  { $where[] = 'r.driver_name LIKE ?';      $params[] = "%$driverName%"; }
+    if ($lane)        { $where[] = 'r.lane = ?';                $params[] = $lane; }
+    if ($round)       { $where[] = 'r.round = ?';               $params[] = $round; }
+
+    $whereClause = 'WHERE ' . implode(' AND ', $where);
+
+    $countStmt = $pdoDiv->prepare("SELECT COUNT(*) FROM div_runs r $whereClause");
+    $countStmt->execute($params);
+    $total = (int)$countStmt->fetchColumn();
+
+    $runParams = array_merge($params, [$limit, $offset]);
+    $runsStmt = $pdoDiv->prepare("
+        SELECT r.id, r.uuid, r.race_lookup, r.nhra_division, r.run_timestamp_utc, r.run_time_local,
+               r.category, r.class_index, r.round, r.lane, r.driver_name, r.car_number,
+               r.dial_in, r.rt, r.ft60, r.ft330, r.ft660, r.mph660, r.ft1000, r.mph1000,
+               r.ft1320, r.mph1320, r.win_flag, r.dq_flag, r.mov, r.place
+        FROM div_runs r
+        $whereClause
+        ORDER BY r.run_timestamp_utc, r.class_index, r.round, r.lane
+        LIMIT ? OFFSET ?
+    ");
+    $runsStmt->execute($runParams);
+    $runs = $runsStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Load canonical weather for this event to join
+    $wxMap = [];
+    $wxStmt = $pdoDiv->prepare("
+        SELECT timestamp_utc, temp_f, rh_pct, pressure_inhg
+        FROM div_weather_canonical
+        WHERE event_id = ?
+        ORDER BY timestamp_utc
+    ");
+    $wxStmt->execute([$evRow['id']]);
+    $wxRows = $wxStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Build time index for nearest-sample lookup
+    $wxTimes = array_map(fn($w) => strtotime($w['timestamp_utc']), $wxRows);
+
+    $joinedCount = 0;
+
+    foreach ($runs as &$run) {
+        $run['source_ref']   = null;
+        $run['created_at']   = '';
+        $run['incident_count'] = 0;
+
+        // Cast numeric fields
+        foreach (['dial_in','rt','ft60','ft330','ft660','mph660','ft1000','mph1000','ft1320','mph1320','mov'] as $f) {
+            if ($run[$f] !== null) $run[$f] = (float)$run[$f];
+        }
+        $run['win_flag'] = (bool)$run['win_flag'];
+        $run['dq_flag']  = (bool)$run['dq_flag'];
+
+        // Join nearest canonical weather sample (within 30 min)
+        $run['weather'] = null;
+        if (!empty($wxRows) && $run['run_timestamp_utc']) {
+            $runTs = strtotime($run['run_timestamp_utc']);
+            $best  = null;
+            $bestDelta = PHP_INT_MAX;
+            foreach ($wxRows as $i => $wx) {
+                $delta = abs($wxTimes[$i] - $runTs);
+                if ($delta < $bestDelta) { $bestDelta = $delta; $best = $wx; }
+            }
+            if ($best && $bestDelta <= 1800) {
+                $run['weather'] = [
+                    'timestamp_utc'             => $best['timestamp_utc'],
+                    'temp_f'                    => $best['temp_f'] !== null ? (float)$best['temp_f'] : null,
+                    'rh_pct'                    => $best['rh_pct'] !== null ? (float)$best['rh_pct'] : null,
+                    'pressure_inhg'             => $best['pressure_inhg'] !== null ? (float)$best['pressure_inhg'] : null,
+                    'delta_seconds'             => $bestDelta,
+                    'canonical_source_kind'     => 'div_canonical',
+                    'canonical_source_detail'   => null,
+                    'sample_count'              => 1,
+                    'sample_sources_json'       => null,
+                ];
+                $joinedCount++;
+            }
+        }
+    }
+    unset($run);
+
+    rsa_jsonResponse([
+        'runs'          => $runs,
+        'total'         => $total,
+        'joinedCount'   => $joinedCount,
+        'windowMinutes' => 30,
+        'limit'         => $limit,
+        'offset'        => $offset,
+        'raceLookup'    => $raceLookup,
     ]);
 }

@@ -513,6 +513,38 @@ export default function ParityPortal() {
   const handleRefreshEventData = useCallback(async () => {
     if (!selectedEventId || refreshingPhase1) return;
 
+    // ── Divisional event: single-step refresh ─────────────────────────────
+    if (selectedDivision !== 'nationals') {
+      setRefreshingPhase1(true);
+      setRefreshStep('Refreshing…');
+      setRefreshResult(null);
+      setRefreshError('');
+      try {
+        const res = await divApi.refreshDivEventData({ eventId: selectedEventId });
+        setRefreshKey(k => k + 1);
+        loadEvents(selectedYear, selectedDivision);
+        divApi.divEventCategories(selectedEventId).then(r => setEventCategories(r.categories as any[])).catch(() => {});
+        // Map DivRefreshResponse to RefreshEventDataResponse shape for banner
+        setRefreshResult({
+          ok: res.ok,
+          event_id: res.event_id,
+          event_name: res.event_name,
+          range: { start_local: '', end_local: '' },
+          timing: { fetched: res.timing.fetched, inserted: res.timing.inserted, updated: res.timing.updated ?? 0, errors: res.timing.errors },
+          tempest: { errors: [] },
+          open_meteo: { errors: [] },
+          canonical: { inserted: res.weather.inserted, errors: res.weather.errors },
+          duration_ms: res.duration_ms,
+        } as any);
+      } catch (e: any) {
+        setRefreshError(e.message || 'Refresh failed');
+      } finally {
+        setRefreshStep('');
+        setRefreshingPhase1(false);
+      }
+      return;
+    }
+
     // ── Phase 1: timing only (fast, always runs) ──────────────────────────
     setRefreshingPhase1(true);
     setRefreshStep('Refreshing timing…');
@@ -567,7 +599,7 @@ export default function ParityPortal() {
       setRefreshStep('');
       setRefreshingPhase2(false);
     }
-  }, [selectedEventId, refreshingPhase1, selectedYear, loadEvents]);
+  }, [selectedEventId, refreshingPhase1, selectedYear, selectedDivision, loadEvents]);
 
   const handleEventChange = useCallback((id: number) => {
     setSelectedEventId(id);
@@ -652,13 +684,18 @@ export default function ParityPortal() {
         </select>
         <select style={{ ...S.input, width: 140, fontSize: '0.8rem' }} value={category}
           onChange={e => setCategory(e.target.value)}>
-          <optgroup label="Recommended">
-            {RECOMMENDED_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </optgroup>
+          {selectedDivision === 'nationals' && (
+            <optgroup label="Recommended">
+              {RECOMMENDED_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </optgroup>
+          )}
           {allEventCategories.length > 0 && (
             <optgroup label="All Categories">
               {allEventCategories.map((c: string) => <option key={c} value={c}>{c}</option>)}
             </optgroup>
+          )}
+          {selectedDivision !== 'nationals' && allEventCategories.length === 0 && (
+            <option value="">— select event first —</option>
           )}
         </select>
         {canRefresh && selectedEventId && (
@@ -748,8 +785,8 @@ export default function ParityPortal() {
       </div>
 
       {/* ── Dashboard Panels ── */}
-      {tab === 'eventRuns' && <EventRunsPanel event={selectedEvent} category={category} classIndex={classIndex} onDriverClick={goToDriverHistory} refreshKey={refreshKey} />}
-      {tab === 'liveTiming' && <LiveTimingPanel event={selectedEvent} refreshKey={refreshKey} onDriverClick={goToDriverHistory} />}
+      {tab === 'eventRuns' && <EventRunsPanel event={selectedEvent} category={category} classIndex={classIndex} onDriverClick={goToDriverHistory} refreshKey={refreshKey} division={selectedDivision} />}
+      {tab === 'liveTiming' && <LiveTimingPanel event={selectedEvent} refreshKey={refreshKey} onDriverClick={goToDriverHistory} division={selectedDivision} />}
       {tab === 'qualSheet' && <QualSheetPanel event={selectedEvent} classIndex={classIndex} onDriverClick={goToDriverHistory} division={selectedDivision} />}
       {tab === 'driverHistory' && <DriverDrilldownPanel initialFilter={driverHistoryFilter} />}
       {tab === 'rtAnalysis' && <RtAnalysisPanel event={selectedEvent} category={category} division={selectedDivision} />}
@@ -922,7 +959,7 @@ function matchColFilter(spec: ColFilterSpec, cellStr: string, rawVal: number | s
 
 const COL_FILTER_HINT = 'Filter: text (contains)  |  >x  >=x  <x  <=x  |  x~y (between)';
 
-function EventRunsPanel({ event, category: globalCategory, classIndex: _globalClassIndex, onDriverClick, refreshKey = 0 }: { event: EventWithStats | null; category?: string; classIndex: string; onDriverClick?: (driver: string, classIndex?: string) => void; refreshKey?: number }) {
+function EventRunsPanel({ event, category: globalCategory, classIndex: _globalClassIndex, onDriverClick, refreshKey = 0, division = 'nationals' }: { event: EventWithStats | null; category?: string; classIndex: string; onDriverClick?: (driver: string, classIndex?: string) => void; refreshKey?: number; division?: string }) {
   void _globalClassIndex; // kept for backward-compat prop interface
   const { can: canCap } = useCapabilities();
   const canReadIncidents = canCap('incidents.read' as any);
@@ -995,27 +1032,24 @@ function EventRunsPanel({ event, category: globalCategory, classIndex: _globalCl
     if (!event?.race_lookup) return;
     setLoading(true); setError('');
     try {
-      const res = await parityApi.runsWithWeather({
-        raceLookup: event.race_lookup,
-        category: categoryFilter || undefined,
-        round: roundFilter || undefined,
-        lane: laneFilter || undefined,
-        limit: 5000,
-      });
+      const isDiv = division !== 'nationals';
+      const res = isDiv
+        ? await divApi.runsWithWeather({ raceLookup: event.race_lookup, category: categoryFilter || undefined, round: roundFilter || undefined, lane: laneFilter || undefined, limit: 5000 })
+        : await parityApi.runsWithWeather({ raceLookup: event.race_lookup, category: categoryFilter || undefined, round: roundFilter || undefined, lane: laneFilter || undefined, limit: 5000 });
       setRuns(res.runs);
       setTotal(res.total);
       setJoinedCount(res.joinedCount);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [event?.race_lookup, categoryFilter, roundFilter, laneFilter]);
+  }, [event?.race_lookup, categoryFilter, roundFilter, laneFilter, division]);
 
   const loadFlags = useCallback(async () => {
-    if (!event?.race_lookup) return;
+    if (!event?.race_lookup || division !== 'nationals') return;
     try {
       const res = await parityApi.runFlags(event.race_lookup);
       setFlaggedRunIds(new Set(res.flags.filter(f => f.flag_type === 'bad' || f.flag_type === 'exclude').map(f => f.run_id)));
     } catch { /* ignore */ }
-  }, [event?.race_lookup]);
+  }, [event?.race_lookup, division]);
 
   useEffect(() => { loadRuns(); loadFlags(); }, [loadRuns, loadFlags, refreshKey]);
 
@@ -8344,7 +8378,7 @@ type RunGroup = {
   runs: RunWithWeather[];
 };
 
-function LiveTimingPanel({ event, refreshKey = 0, onDriverClick }: { event: EventWithStats | null; refreshKey?: number; onDriverClick?: (driver: string, classIndex?: string) => void }) {
+function LiveTimingPanel({ event, refreshKey = 0, onDriverClick, division = 'nationals' }: { event: EventWithStats | null; refreshKey?: number; onDriverClick?: (driver: string, classIndex?: string) => void; division?: string }) {
   const [runs, setRuns] = useState<RunWithWeather[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -8373,10 +8407,10 @@ function LiveTimingPanel({ event, refreshKey = 0, onDriverClick }: { event: Even
     if (!event?.race_lookup) return;
     setLoading(true); setError('');
     try {
-      const res = await parityApi.runsWithWeather({
-        raceLookup: event.race_lookup,
-        limit: 10000,
-      });
+      const isDiv = division !== 'nationals';
+      const res = isDiv
+        ? await divApi.runsWithWeather({ raceLookup: event.race_lookup, limit: 10000 })
+        : await parityApi.runsWithWeather({ raceLookup: event.race_lookup, limit: 10000 });
       // Sort newest-to-oldest by local time
       const sorted = [...res.runs].sort((a, b) => {
         const ta = a.run_time_local || a.run_timestamp_utc || '';
@@ -8386,7 +8420,7 @@ function LiveTimingPanel({ event, refreshKey = 0, onDriverClick }: { event: Even
       setRuns(sorted);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [event?.race_lookup]);
+  }, [event?.race_lookup, division]);
 
   useEffect(() => { loadRuns(); }, [loadRuns, refreshKey]);
 
