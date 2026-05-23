@@ -451,4 +451,99 @@ export const divApi = {
     if (params.endUtc) qs.set('endUtc', params.endUtc);
     return divRequest<import('./parityApi').WeatherTimeseriesResponse>(`/parity_div.php?${qs.toString()}`);
   },
+
+  async purgeDivWeather(params: { eventId: number }): Promise<{ ok: boolean; eventId: number; samplesDeleted: number; canonicalDeleted: number }> {
+    return divRequest('/parity_div.php?action=purgeDivWeather', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  // ── Div Parity Report endpoints ───────────────────────────────────────
+
+  async divParitySummary(params: {
+    eventId: number;
+    category?: string;
+    classIndex?: string;
+    metric?: string;
+    mode?: 'raw' | 'corrected';
+    topN?: number;
+    sessionScope?: 'qual' | 'elim' | 'both';
+    groupBy?: 'engineCombo' | 'bodyStyle';
+    includeUnknown?: boolean;
+    splitFrom?: string;
+    splitTo?: string;
+  }): Promise<import('./parityApi').ParitySummaryResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divParitySummary');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.metric) qs.set('metric', params.metric);
+    if (params.mode) qs.set('mode', params.mode);
+    if (params.topN) qs.set('topN', String(params.topN));
+    if (params.sessionScope) qs.set('sessionScope', params.sessionScope);
+    if (params.groupBy) qs.set('groupBy', params.groupBy);
+    if (params.includeUnknown) qs.set('includeUnknown', '1');
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
+    return divRequest<import('./parityApi').ParitySummaryResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async divParityIncrementals(params: {
+    eventId: number;
+    category?: string;
+    classIndex?: string;
+    sessionScope?: 'qual' | 'elim' | 'both';
+    mode?: 'raw' | 'corrected';
+    groupBy?: 'engineCombo' | 'bodyStyle';
+    includeUnknown?: boolean;
+  }): Promise<import('./parityApi').ParityIncrementalsResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divParityIncrementals');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.sessionScope) qs.set('sessionScope', params.sessionScope);
+    if (params.mode) qs.set('mode', params.mode);
+    if (params.groupBy) qs.set('groupBy', params.groupBy);
+    if (params.includeUnknown) qs.set('includeUnknown', '1');
+    return divRequest<import('./parityApi').ParityIncrementalsResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async divParityQualOrder(params: {
+    eventId: number;
+    category?: string;
+    classIndex?: string;
+    metric?: string;
+    mode?: 'raw' | 'corrected';
+    sessionScope?: 'qual' | 'elim' | 'both';
+    splitFrom?: string;
+    splitTo?: string;
+  }): Promise<import('./parityApi').ParityQualOrderResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divParityQualOrder');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.metric) qs.set('metric', params.metric);
+    if (params.mode) qs.set('mode', params.mode);
+    if (params.sessionScope) qs.set('sessionScope', params.sessionScope);
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
+    return divRequest<import('./parityApi').ParityQualOrderResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async divParitySessionWeather(params: {
+    eventId: number;
+    category?: string;
+    classIndex?: string;
+  }): Promise<import('./parityApi').ParitySessionWeatherResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divParitySessionWeather');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    return divRequest<import('./parityApi').ParitySessionWeatherResponse>(`/parity_div.php?${qs.toString()}`);
+  },
 };

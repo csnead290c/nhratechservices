@@ -12,6 +12,7 @@ import {
   type EventWithStats,
   type EngineComboRow,
 } from '../services/parityApi';
+import { divApi } from '../services/divApi';
 import { useCapabilities } from '../domain/config/useCapabilities';
 import { exportEventParityPdf, exportLongTermParityPdf } from '../services/parityPdf';
 import { waterGrains, pct_to_frac } from '../domain/parity/weatherCorrection';
@@ -192,16 +193,12 @@ export default function ParityReport({ event, events, classIndex, category, onCl
   const [corrMode, setCorrMode] = useState<'raw' | 'corrected'>('raw');
   const [groupBy, setGroupBy] = useState<'engineCombo' | 'bodyStyle'>('engineCombo');
   const [eventCount, setEventCount] = useState<1 | 3 | 5>(1);
-  const metric = 'et_1320';
+  const [metric, setMetric] = useState('et_1320');
+  const [splitFrom, setSplitFrom] = useState('');
+  const [splitTo, setSplitTo] = useState('');
   const [overrideEv, setOverrideEv] = useState<number | null>(null);
-
-  if (division !== 'nationals') {
-    return (
-      <div style={{ padding: '1.5rem', color: 'var(--color-muted)', fontSize: '0.875rem' }}>
-        Parity Report is not yet available for divisional events — engine combo and weather correction data required.
-      </div>
-    );
-  }
+  const splitMarkers = ['t60', 't330', 't660', 't1000', 't1320'];
+  const isIncrementalET = ['t60', 't330', 't660', 't1000', 'et_1320'].includes(metric);
 
   return (
     <div style={S.page}>
@@ -214,6 +211,20 @@ export default function ParityReport({ event, events, classIndex, category, onCl
           {mode === 'event' && (
             <label style={{ fontSize: '0.78rem' }}>Events:<select value={eventCount} onChange={e => setEventCount(Number(e.target.value) as 1 | 3 | 5)} style={{ ...S.inp, width: 70, marginLeft: 4 }}><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label>
           )}
+          <label style={{ fontSize: '0.78rem' }}>Metric:<select value={metric} onChange={e => { setMetric(e.target.value); setSplitFrom(''); setSplitTo(''); }} style={{ ...S.inp, width: 110, marginLeft: 4 }}>{PARITY_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label>
+          {isIncrementalET && (
+            <label style={{ fontSize: '0.78rem' }}>Split:
+              <select value={splitFrom} onChange={e => { setSplitFrom(e.target.value); setSplitTo(''); }} style={{ ...S.inp, width: 65, marginLeft: 4 }}>
+                <option value="">From</option>
+                {splitMarkers.slice(0, -1).map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+              <span style={{ margin: '0 2px' }}>–</span>
+              <select value={splitTo} onChange={e => setSplitTo(e.target.value)} style={{ ...S.inp, width: 65 }}>
+                <option value="">To</option>
+                {splitMarkers.slice(splitFrom ? splitMarkers.indexOf(splitFrom) + 1 : 1).map(m => <option key={m} value={m}>{m}</option>)}
+              </select>
+            </label>
+          )}
           <label style={{ fontSize: '0.78rem' }}>Group:<select value={groupBy} onChange={e => setGroupBy(e.target.value as any)} style={{ ...S.inp, width: 110, marginLeft: 4 }}><option value="engineCombo">Engine Combo</option><option value="bodyStyle">Body Style</option></select></label>
           <label style={{ fontSize: '0.78rem' }}>Mode:<select value={corrMode} onChange={e => setCorrMode(e.target.value as any)} style={{ ...S.inp, width: 90, marginLeft: 4 }}><option value="raw">Raw</option><option value="corrected">Corrected</option></select></label>
         </div>
@@ -225,8 +236,8 @@ export default function ParityReport({ event, events, classIndex, category, onCl
       )}
       <ParityErrorBoundary>
         {mode === 'event'
-          ? <EventReport event={overrideEv ? { ...(event as any), id: overrideEv } : event} events={events} eventCount={eventCount} category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} />
-          : <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} />
+          ? <EventReport event={overrideEv ? { ...(event as any), id: overrideEv } : event} events={events} eventCount={eventCount} category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} division={division} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+          : <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
         }
       </ParityErrorBoundary>
     </div>
@@ -237,10 +248,13 @@ export default function ParityReport({ event, events, classIndex, category, onCl
 // EVENT PARITY REPORT
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function EventReport({ event, events, eventCount, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick }: {
+export function EventReport({ event, events, eventCount, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick, division = 'nationals', splitFrom, splitTo }: {
   event: EventWithStats | null; events: EventWithStats[]; eventCount: 1 | 3 | 5; category: string; displayLabel: string; metric: string;
   corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
   onDriverClick?: (driver: string, classIndex?: string) => void;
+  division?: string;
+  splitFrom?: string;
+  splitTo?: string;
 }) {
   const topN = 4;
   const [summary, setSummary] = useState<ParitySummaryResponse | null>(null);
@@ -285,12 +299,13 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
         : sortedWithRuns.slice(0, eventCount);
       const candidateIds = candidates.map(e => e.id);
       
-      const b = { eventIds: candidateIds, category, metric, mode: corrMode, topN, sessionScope, groupBy };
+      const b = { eventIds: candidateIds, category, metric, mode: corrMode, topN, sessionScope, groupBy, splitFrom, splitTo };
+      const isDiv = division !== 'nationals';
       Promise.all([
-        cf(ck('sum', b), () => parityApi.paritySummary(b)),
-        cf(ck('qo', { eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy }), () => parityApi.parityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy })),
-        cf(ck('inc', { eventIds: candidateIds, category, sessionScope, mode: corrMode, groupBy }), () => parityApi.parityIncrementals({ eventIds: candidateIds, category, sessionScope, mode: corrMode, groupBy })),
-        cf(ck('wx', { eventIds: candidateIds, category }), () => parityApi.paritySessionWeather({ eventIds: candidateIds, category })),
+        cf(ck('sum', b), () => isDiv ? divApi.divParitySummary({ eventId: event.id, category, metric, mode: corrMode, topN, sessionScope, groupBy, splitFrom, splitTo }) : parityApi.paritySummary(b)),
+        cf(ck('qo', { eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy, splitFrom, splitTo }), () => isDiv ? divApi.divParityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, splitFrom, splitTo }) : parityApi.parityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy, splitFrom, splitTo })),
+        cf(ck('inc', { eventIds: candidateIds, category, sessionScope, mode: corrMode, groupBy }), () => isDiv ? divApi.divParityIncrementals({ eventId: event.id, category, sessionScope, mode: corrMode, groupBy }) : parityApi.parityIncrementals({ eventIds: candidateIds, category, sessionScope, mode: corrMode, groupBy })),
+        cf(ck('wx', { eventIds: candidateIds, category }), () => isDiv ? divApi.divParitySessionWeather({ eventId: event.id, category }) : parityApi.paritySessionWeather({ eventIds: candidateIds, category })),
       ]).then(([s, q, i, w]) => {
         const confirmedIds = new Set<number>(s.eventIds ?? candidateIds);
         setSelectedEvents(candidates.filter(e => confirmedIds.has(e.id)));
@@ -304,82 +319,92 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
     } else {
       // Single event mode
       setSelectedEvents([event]);
-      const b = { eventId: event.id, category, metric, mode: corrMode, topN, sessionScope, groupBy };
+      const b = { eventId: event.id, category, metric, mode: corrMode, topN, sessionScope, groupBy, splitFrom, splitTo };
+      const isDiv = division !== 'nationals';
       Promise.all([
-        cf(ck('sum', b), () => parityApi.paritySummary(b)),
-        cf(ck('qo', { eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy }), () => parityApi.parityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy })),
-        cf(ck('inc', { eventId: event.id, category, sessionScope, mode: corrMode, groupBy }), () => parityApi.parityIncrementals({ eventId: event.id, category, sessionScope, mode: corrMode, groupBy })),
-        cf(ck('wx', { eventId: event.id, category }), () => parityApi.paritySessionWeather({ eventId: event.id, category })),
+        cf(ck('sum', b), () => isDiv ? divApi.divParitySummary({ eventId: event.id, category, metric, mode: corrMode, topN, sessionScope, groupBy, splitFrom, splitTo }) : parityApi.paritySummary(b)),
+        cf(ck('qo', { eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy, splitFrom, splitTo }), () => isDiv ? divApi.divParityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, splitFrom, splitTo }) : parityApi.parityQualOrder({ eventId: event.id, category, metric, mode: 'raw', sessionScope, groupBy, splitFrom, splitTo })),
+        cf(ck('inc', { eventId: event.id, category, sessionScope, mode: corrMode, groupBy }), () => isDiv ? divApi.divParityIncrementals({ eventId: event.id, category, sessionScope, mode: corrMode, groupBy }) : parityApi.parityIncrementals({ eventId: event.id, category, sessionScope, mode: corrMode, groupBy })),
+        cf(ck('wx', { eventId: event.id, category }), () => isDiv ? divApi.divParitySessionWeather({ eventId: event.id, category }) : parityApi.paritySessionWeather({ eventId: event.id, category })),
       ]).then(([s, q, i, w]) => { setSummary(s); setQualOrder(q); setInc(i); setWx(w); })
         .catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     }
-  }, [event?.id, events, eventCount, category, metric, corrMode, groupBy, sessionScope]);
+  }, [event?.id, events, eventCount, category, metric, corrMode, groupBy, sessionScope, splitFrom, splitTo, division]);
   useEffect(() => { load(); }, [load]);
 
   const handleExportPdf = useCallback(async () => {
     if (!summary || !event) return;
     setExporting(true);
     try {
+      const isDiv = division !== 'nationals';
+
       // ── Corrected summary (corrected or combined mode) ──
       // Always fetch separately so the PDF has correct data regardless of what the UI's corrMode is.
       let correctedSummary: ParitySummaryResponse | null = null;
       if (pdfMode === 'combined' || pdfMode === 'corrected') {
         try {
-          const cb = eventCount > 1
-            ? { eventIds: summary.eventIds ?? [event.id], category, metric, mode: 'corrected' as const, topN, sessionScope, groupBy }
-            : { eventId: event.id, category, metric, mode: 'corrected' as const, topN, sessionScope, groupBy };
-          correctedSummary = await parityApi.paritySummary(cb);
+          if (isDiv) {
+            correctedSummary = await divApi.divParitySummary({ eventId: event.id, category, metric, mode: 'corrected', topN, sessionScope, groupBy });
+          } else {
+            const cb = eventCount > 1
+              ? { eventIds: summary.eventIds ?? [event.id], category, metric, mode: 'corrected' as const, topN, sessionScope, groupBy }
+              : { eventId: event.id, category, metric, mode: 'corrected' as const, topN, sessionScope, groupBy };
+            correctedSummary = await parityApi.paritySummary(cb);
+          }
         } catch { correctedSummary = null; }
       }
 
       // ── Extended raw summary (combined mode only) ──
-      // Fetch with higher topN so corrected-ranked runs outside the normal topN window
-      // can still be matched back to their source raw ET/MPH by runId.
       let rawSummaryExtended: ParitySummaryResponse | null = null;
       if (pdfMode === 'combined') {
         try {
           const extTopN = Math.max(topN * 5, 20);
-          const rb = eventCount > 1
-            ? { eventIds: summary.eventIds ?? [event.id], category, metric, mode: 'raw' as const, topN: extTopN, sessionScope, groupBy }
-            : { eventId: event.id, category, metric, mode: 'raw' as const, topN: extTopN, sessionScope, groupBy };
-          rawSummaryExtended = await parityApi.paritySummary(rb);
+          if (isDiv) {
+            rawSummaryExtended = await divApi.divParitySummary({ eventId: event.id, category, metric, mode: 'raw', topN: extTopN, sessionScope, groupBy });
+          } else {
+            const rb = eventCount > 1
+              ? { eventIds: summary.eventIds ?? [event.id], category, metric, mode: 'raw' as const, topN: extTopN, sessionScope, groupBy }
+              : { eventId: event.id, category, metric, mode: 'raw' as const, topN: extTopN, sessionScope, groupBy };
+            rawSummaryExtended = await parityApi.paritySummary(rb);
+          }
         } catch { rawSummaryExtended = null; }
       }
 
-      // ── Incremental comparison (PDF-only fetch) ──
+      // ── Incremental comparison (PDF-only fetch, national only) ──
       let incComparison: IncrementalComparisonResponse | null = null;
-      try {
-        incComparison = await parityApi.incrementalComparison({ eventId: event.id, category });
-      } catch { incComparison = null; }
+      if (!isDiv) {
+        try {
+          incComparison = await parityApi.incrementalComparison({ eventId: event.id, category });
+        } catch { incComparison = null; }
+      }
 
-      // ── 5-event trend: fetch 5 years back, keep events with data, take 5 most recent ──
-      async function fetchTrend(mode: 'raw' | 'corrected'): Promise<RangeParityMatrixResponse | null> {
+      // ── 5-event trend: unified (national+div) for both div and national events ──
+      async function fetchTrend(trendMode: 'raw' | 'corrected'): Promise<RangeParityMatrixResponse | null> {
         try {
           const curYear = new Date().getFullYear();
           const yearsToFetch = Array.from({ length: 5 }, (_, i) => curYear - i);
           const settled = await Promise.allSettled(
             yearsToFetch.map(yr =>
-              parityApi.rangeParityMatrix({ category, metric, mode, topN, sessionScope: sessionScope as any, groupBy, year: yr })
+              parityApi.rangeParityMatrixUnified({ category, metric, mode: trendMode, topN, sessionScope: sessionScope as any, groupBy, year: yr })
             )
           );
           const results = settled
             .filter((r): r is PromiseFulfilledResult<RangeParityMatrixResponse> => r.status === 'fulfilled')
             .map(r => r.value);
           if (results.length === 0) return null;
-          const allEvents: RangeParityMatrixResponse['events'] = [];
+          const allEvts: RangeParityMatrixResponse['events'] = [];
           const allMatrix: RangeParityMatrixResponse['matrix'] = {};
           const allCombos = new Set<string>();
           const seenIds = new Set<number>();
           for (const res of results) {
             for (const ev of res.events) {
-              if (!seenIds.has(ev.eventId)) { seenIds.add(ev.eventId); allEvents.push(ev); }
+              if (!seenIds.has(ev.eventId)) { seenIds.add(ev.eventId); allEvts.push(ev); }
               allMatrix[ev.eventId] = res.matrix[ev.eventId];
             }
             res.combos.forEach(c => allCombos.add(c));
           }
-          // Filter to events with actual data for this class, then take 5 most recent
-          const eventsWithData = allEvents.filter(ev => {
+          const eventsWithData = allEvts.filter(ev => {
             const m = allMatrix[ev.eventId];
             return m && Object.values(m).some(cell => cell?.best != null);
           });
@@ -387,7 +412,7 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
           const sliced = eventsWithData.slice(-5);
           const filteredMatrix: typeof allMatrix = {};
           for (const ev of sliced) filteredMatrix[ev.eventId] = allMatrix[ev.eventId];
-          return { ...results[0], events: sliced, combos: [...allCombos], matrix: filteredMatrix, mode };
+          return { ...results[0], events: sliced, combos: [...allCombos], matrix: filteredMatrix, mode: trendMode };
         } catch { return null; }
       }
       const [trendRaw, trendCorrected] = await Promise.all([fetchTrend('raw'), fetchTrend('corrected')]);
@@ -1081,9 +1106,11 @@ function WeatherTable({ data }: { data: ParitySessionWeatherResponse }) {
 
 type RangeMode = 'previousN' | 'season' | 'custom';
 
-function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, sessionScope, onEventClick }: {
+function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, sessionScope, onEventClick, splitFrom, splitTo }: {
   category: string; displayLabel: string; metric: string; corrMode: 'raw' | 'corrected';
   groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both'; onEventClick: (id: number) => void;
+  splitFrom?: string;
+  splitTo?: string;
 }) {
   const topN = 4;
   const [rangeMode, setRangeMode] = useState<RangeMode>('previousN');
@@ -1095,6 +1122,9 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [exporting, setExporting] = useState(false);
+  const [unified, setUnified] = useState(true);
+
+  const rangeFn = unified ? parityApi.rangeParityMatrixUnified.bind(parityApi) : parityApi.rangeParityMatrix.bind(parityApi);
 
   const load = useCallback(() => {
     setLoading(true); setErr('');
@@ -1103,8 +1133,8 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
       const curYear = new Date().getFullYear();
       const yearsToFetch = Array.from({ length: 10 }, (_, i) => curYear - i);
       Promise.allSettled(yearsToFetch.map(y =>
-        cf(ck('range', { category, metric, mode: corrMode, topN, sessionScope, groupBy, year: y }),
-          () => parityApi.rangeParityMatrix({ category, metric, mode: corrMode, topN, sessionScope, groupBy, year: y }))
+        cf(ck('range', { category, metric, mode: corrMode, topN, sessionScope, groupBy, year: y, unified, splitFrom, splitTo }),
+          () => rangeFn({ category, metric, mode: corrMode, topN, sessionScope, groupBy, year: y, splitFrom, splitTo }))
       )).then(settled => {
         const results = settled
           .filter((r): r is PromiseFulfilledResult<RangeParityMatrixResponse> => r.status === 'fulfilled')
@@ -1140,18 +1170,18 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
       }).catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     } else {
-      let params: any = { category, metric, mode: corrMode, topN, sessionScope, groupBy };
+      let params: any = { category, metric, mode: corrMode, topN, sessionScope, groupBy, splitFrom, splitTo };
       if (rangeMode === 'season') {
         params.year = year;
       } else {
         params.startDate = startDate; params.endDate = endDate;
       }
-      cf(ck('range', params), () => parityApi.rangeParityMatrix(params))
+      cf(ck('range', { ...params, unified }), () => rangeFn(params))
         .then(d => setData(d))
         .catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     }
-  }, [category, metric, corrMode, sessionScope, groupBy, rangeMode, year, startDate, endDate, prevN]);
+  }, [category, metric, corrMode, sessionScope, groupBy, rangeMode, year, startDate, endDate, prevN, unified, rangeFn, splitFrom, splitTo]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -1199,6 +1229,10 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
 
       {/* Range controls */}
       <div style={{ ...S.row, marginBottom: '0.75rem', flexWrap: 'wrap', gap: '0.5rem' }}>
+        <label style={{ fontSize: '0.72rem' }}>
+          <input type="checkbox" checked={unified} onChange={e => setUnified(e.target.checked)} style={{ marginRight: 4 }} />
+          Unified (Nat + Div)
+        </label>
         <label style={{ fontSize: '0.72rem' }}>Range:
           <select value={rangeMode} onChange={e => setRangeMode(e.target.value as RangeMode)} style={{ ...S.inp, marginLeft: 4 }}>
             <option value="season">Season (Year)</option>
@@ -1245,22 +1279,30 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
   );
 }
 
-/** Generate a short event code like "2025 GAT" from event_code or event name + date */
-function eventShortCode(ev: { event_name: string; event_code?: string | null; start_date_local: string }): string {
+/** Generate a short event code like "2025 GAT" from event_code or event name + date.
+ *  When source is present, prepends [D2] for divisional or [Nat] for national. */
+function eventShortCode(ev: { event_name: string; event_code?: string | null; start_date_local: string; source?: string }): string {
   const yr = ev.start_date_local.slice(0, 4);
   // Use custom event_code if set
-  if (ev.event_code) return `${yr} ${ev.event_code}`;
-  // Try to extract a recognizable abbreviation from the event name
-  const name = ev.event_name.toUpperCase();
-  // Common NHRA track abbreviations: take first 2-3 consonants of first significant word
-  const words = name.replace(/[^A-Z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1 && !['THE', 'NHRA', 'OF', 'AT'].includes(w));
-  let code = '';
-  if (words.length > 0) {
-    // Use first 2 chars of first word + first char of second word if available
-    code = words[0].slice(0, 2) + (words.length > 1 ? words[1].charAt(0) : words[0].charAt(2) || '');
+  let base = '';
+  if (ev.event_code) {
+    base = `${yr} ${ev.event_code}`;
+  } else {
+    // Try to extract a recognizable abbreviation from the event name
+    const name = ev.event_name.toUpperCase();
+    const words = name.replace(/[^A-Z0-9 ]/g, '').split(/\s+/).filter(w => w.length > 1 && !['THE', 'NHRA', 'OF', 'AT'].includes(w));
+    let code = '';
+    if (words.length > 0) {
+      code = words[0].slice(0, 2) + (words.length > 1 ? words[1].charAt(0) : words[0].charAt(2) || '');
+    }
+    if (!code) code = ev.start_date_local.slice(5, 7) + ev.start_date_local.slice(8, 10);
+    base = `${yr} ${code}`;
   }
-  if (!code) code = ev.start_date_local.slice(5, 7) + ev.start_date_local.slice(8, 10);
-  return `${yr} ${code}`;
+  if (ev.source) {
+    const prefix = ev.source === 'national' ? '[Nat]' : `[${ev.source.replace('divisional:', '')}]`;
+    return `${prefix} ${base}`;
+  }
+  return base;
 }
 
 function LongTermContent({ data, topN, onEventClick, metric }: {

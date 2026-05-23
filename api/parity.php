@@ -28,6 +28,7 @@ ini_set('display_errors', '0');
 error_reporting(E_ALL);
 
 require_once __DIR__ . '/config.php';
+require_once __DIR__ . '/config_div.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
 require_once __DIR__ . '/lib/parity.php';
@@ -423,6 +424,10 @@ switch ($action) {
     case 'rangeParityMatrix':
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleRangeParityMatrix($pdo);
+        break;
+    case 'rangeParityMatrixUnified':
+        if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleRangeParityMatrixUnified($pdo);
         break;
     case 'parityIncrementals':
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
@@ -8593,6 +8598,10 @@ function parity_loadEventRunData(PDO $pdo): array {
     }
     if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'classIndex or category is required'], 400);
 
+    $splitFrom = trim($_GET['splitFrom'] ?? '');
+    $splitTo   = trim($_GET['splitTo']   ?? '');
+    $isSplit = ($splitFrom !== '' && $splitTo !== '');
+
     $validMetrics = ['et_1320', 'mph_1320', 'rt', 't60', 't330', 't660', 'mph_660', 't1000', 'mph_1000'];
     if (!in_array($metric, $validMetrics)) rsa_jsonResponse(['error' => 'Invalid metric'], 400);
     if (!in_array($mode, ['raw', 'corrected'])) rsa_jsonResponse(['error' => 'mode must be raw or corrected'], 400);
@@ -8602,7 +8611,19 @@ function parity_loadEventRunData(PDO $pdo): array {
         'et_1320'=>'ft1320','mph_1320'=>'mph1320','rt'=>'rt','t60'=>'ft60',
         't330'=>'ft330','t660'=>'ft660','mph_660'=>'mph660','t1000'=>'ft1000','mph_1000'=>'mph1000',
     ];
-    $dbCol = $colMap[$metric];
+    // Split mode: compute difference between two incremental columns
+    $splitFromCol = ''; $splitToCol = '';
+    if ($isSplit) {
+        $splitColMap = ['t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','t1000'=>'ft1000','t1320'=>'ft1320'];
+        if (!isset($splitColMap[$splitFrom]) || !isset($splitColMap[$splitTo]))
+            rsa_jsonResponse(['error' => 'splitFrom/splitTo must be incremental ET markers: t60,t330,t660,t1000,t1320'], 400);
+        $splitFromCol = $splitColMap[$splitFrom];
+        $splitToCol   = $splitColMap[$splitTo];
+        // For split, sort by the TO column so we fetch valid rows; value is computed post-fetch
+        $dbCol = $splitToCol;
+    } else {
+        $dbCol = $colMap[$metric];
+    }
     $isLowerBetter = !in_array($metric, ['mph_1320', 'mph_660', 'mph_1000']);
     $sortDir = $isLowerBetter ? 'ASC' : 'DESC';
 
@@ -8667,6 +8688,7 @@ function parity_loadEventRunData(PDO $pdo): array {
     elseif ($sessionScope === 'elim')  $sessionFilter = " AND r.round NOT LIKE 'Q%'";
 
     // Fetch runs — use IN clause for multi-event race_lookups
+    $splitNullFilter = $isSplit ? " AND r.ft60 IS NOT NULL AND r.ft330 IS NOT NULL AND r.ft660 IS NOT NULL AND r.ft1000 IS NOT NULL AND r.ft1320 IS NOT NULL" : '';
     if ($useCategory) {
         $params = array_merge($raceLookups, [$category]);
         $classFilter = "r.category = ?";
@@ -8684,6 +8706,7 @@ function parity_loadEventRunData(PDO $pdo): array {
         JOIN parity_events e ON e.race_lookup = r.race_lookup
         WHERE r.race_lookup IN ($raceLookupPH) AND $classFilter
           AND COALESCE(r.dq_flag, 0) = 0 AND r.$dbCol IS NOT NULL AND r.$dbCol > 0
+          $splitNullFilter
           $sessionFilter
         ORDER BY r.$dbCol $sortDir
     ");
@@ -8728,7 +8751,9 @@ function parity_loadEventRunData(PDO $pdo): array {
         $runId = (int)$run['id'];
         $isFlagged = isset($flaggedIds[$runId]);
         $excluded = $isFlagged && !$includeFlagged;
-        $rawValue = (float)$run[$dbCol];
+        $rawValue = $isSplit
+            ? max(0.0, (float)$run[$splitToCol] - (float)$run[$splitFromCol])
+            : (float)$run[$dbCol];
 
         // Always resolve engine combo (needed for weather correction)
         $comboName = 'Unknown';
@@ -8850,10 +8875,11 @@ function parity_loadEventRunData(PDO $pdo): array {
             'eventId' => $eventId, 'eventIds' => array_map('intval', array_column($allEvents, 'id')),
             'isMultiEvent' => $isMultiEvent, 'eventCount' => count($allEvents),
             'classIndex' => $derivedClassIndex, 'category' => $category,
-            'metric' => $metric, 'groupBy' => $groupBy,
+            'metric' => $isSplit ? "split_{$splitFrom}_{$splitTo}" : $metric, 'groupBy' => $groupBy,
             'mode' => $mode, 'topN' => $topN, 'sessionScope' => $sessionScope,
             'includeFlagged' => $includeFlagged, 'includeUnknown' => $includeUnknown,
             'isLowerBetter' => $isLowerBetter,
+            'isSplit' => $isSplit, 'splitFrom' => $splitFrom ?: null, 'splitTo' => $splitTo ?: null,
         ],
         'event' => $isMultiEvent ? [
             'event_name' => count($allEvents) . ' Events Combined',
@@ -9142,12 +9168,26 @@ function handleRangeParityMatrix(PDO $pdo): void {
         rsa_jsonResponse(['error' => 'Provide year or startDate+endDate'], 400);
     }
 
+    $splitFrom = trim($_GET['splitFrom'] ?? '');
+    $splitTo   = trim($_GET['splitTo']   ?? '');
+    $isSplit = ($splitFrom !== '' && $splitTo !== '');
+    $splitFromCol = ''; $splitToCol = '';
+
     $colMap = [
         'et_1320'  => 'ft1320',  'mph_1320' => 'mph1320', 'rt' => 'rt',
         't60'      => 'ft60',    't330'     => 'ft330',    't660' => 'ft660',
         'mph_660'  => 'mph660',  't1000'    => 'ft1000',   'mph_1000' => 'mph1000',
     ];
-    $dbCol = $colMap[$metric];
+    if ($isSplit) {
+        $splitColMap = ['t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','t1000'=>'ft1000','t1320'=>'ft1320'];
+        if (!isset($splitColMap[$splitFrom]) || !isset($splitColMap[$splitTo]))
+            rsa_jsonResponse(['error' => 'splitFrom/splitTo must be t60,t330,t660,t1000,t1320'], 400);
+        $splitFromCol = $splitColMap[$splitFrom];
+        $splitToCol   = $splitColMap[$splitTo];
+        $dbCol = $splitToCol;
+    } else {
+        $dbCol = $colMap[$metric];
+    }
     $isLowerBetter = !in_array($metric, ['mph_1320', 'mph_660', 'mph_1000']);
 
     // Load events in range
@@ -9232,13 +9272,16 @@ function handleRangeParityMatrix(PDO $pdo): void {
             $params = array_merge([$raceLookup], $classIndices);
             $classFilter = "r.class_index IN ($classPlaceholders)";
         }
+        $splitNullFilter = $isSplit ? " AND r.ft60 IS NOT NULL AND r.ft330 IS NOT NULL AND r.ft660 IS NOT NULL AND r.ft1000 IS NOT NULL AND r.ft1320 IS NOT NULL" : '';
         $runStmt = $pdo->prepare("
-            SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index, r.$dbCol AS metric_val,
-                   r.ft1320, r.mph1320, COALESCE(r.dq_flag, 0) AS dq_flag
+            SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+                   r.ft60, r.ft330, r.ft660, r.ft1000, r.ft1320, r.mph1320,
+                   r.$dbCol AS metric_val, COALESCE(r.dq_flag, 0) AS dq_flag
             FROM parity_runs r
             WHERE r.race_lookup = ? AND $classFilter
               AND COALESCE(r.dq_flag, 0) = 0 AND r.$dbCol IS NOT NULL AND r.$dbCol > 0
               AND NOT EXISTS (SELECT 1 FROM parity_run_flags f WHERE f.run_id = r.id AND f.flag_type IN ('bad','exclude'))
+              $splitNullFilter
               $sessionFilter
         ");
         $runStmt->execute($params);
@@ -9260,7 +9303,9 @@ function handleRangeParityMatrix(PDO $pdo): void {
             }
             $allComboNames[$comboName] = true;
 
-            $value = (float)$run['metric_val'];
+            $value = $isSplit
+                ? max(0.0, (float)$run[$splitToCol] - (float)$run[$splitFromCol])
+                : (float)$run['metric_val'];
 
             // Apply correction if needed (engine combo correction only; body style has no HPC)
             if ($mode === 'corrected' && $groupBy === 'engineCombo' && $run['run_timestamp_utc'] && $comboId !== null && isset($engineCombos[$comboId])) {
@@ -13329,5 +13374,288 @@ function handleRtAnalysis(PDO $pdo): void {
         'runs'        => $runs,
         'driverStats' => $sorted,
         'holeshots'   => $holeshots,
+    ]);
+}
+
+// ============================================================================
+// GET ?action=rangeParityMatrixUnified
+//     Same params as rangeParityMatrix; also queries divisional DB.
+//     Divisional events use synthetic negative IDs: -(div_event_id).
+//     Response adds 'source' field per event: 'national' | 'divisional:<DIVISION>'.
+// ============================================================================
+
+function handleRangeParityMatrixUnified(PDO $pdo): void {
+    // ── Parse params (identical to handleRangeParityMatrix) ──────────────
+    $classIndex   = trim($_GET['classIndex'] ?? '');
+    $category     = trim($_GET['category'] ?? '');
+    $metric       = trim($_GET['metric'] ?? 'et_1320');
+    $mode         = trim($_GET['mode'] ?? 'raw');
+    $topN         = max(1, min(20, (int)($_GET['topN'] ?? 4)));
+    $sessionScope = trim($_GET['sessionScope'] ?? 'both');
+    $groupBy      = trim($_GET['groupBy'] ?? 'engineCombo');
+    $year         = (int)($_GET['year'] ?? 0);
+    $startDate    = trim($_GET['startDate'] ?? '');
+    $endDate      = trim($_GET['endDate'] ?? '');
+
+    if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'category or classIndex is required'], 400);
+
+    $splitFrom = trim($_GET['splitFrom'] ?? '');
+    $splitTo   = trim($_GET['splitTo']   ?? '');
+    $isSplit = ($splitFrom !== '' && $splitTo !== '');
+    $splitFromCol = ''; $splitToCol = '';
+
+    $colMap = ['et_1320'=>'ft1320','mph_1320'=>'mph1320','rt'=>'rt','t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','mph_660'=>'mph660','t1000'=>'ft1000','mph_1000'=>'mph1000'];
+    if ($isSplit) {
+        $splitColMap = ['t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','t1000'=>'ft1000','t1320'=>'ft1320'];
+        if (!isset($splitColMap[$splitFrom]) || !isset($splitColMap[$splitTo]))
+            rsa_jsonResponse(['error' => 'splitFrom/splitTo must be t60,t330,t660,t1000,t1320'], 400);
+        $splitFromCol = $splitColMap[$splitFrom];
+        $splitToCol   = $splitColMap[$splitTo];
+        $dbCol = $splitToCol;
+        $isLowerBetter = true;
+    } else {
+        if (!isset($colMap[$metric])) rsa_jsonResponse(['error' => 'Invalid metric'], 400);
+        $dbCol = $colMap[$metric];
+        $isLowerBetter = !in_array($metric, ['mph_1320','mph_660','mph_1000']);
+    }
+    if (!in_array($mode, ['raw','corrected'])) rsa_jsonResponse(['error' => 'mode must be raw or corrected'], 400);
+    if (!in_array($sessionScope, ['qual','elim','both'])) rsa_jsonResponse(['error' => 'invalid sessionScope'], 400);
+    if (!in_array($groupBy, ['engineCombo','bodyStyle'])) $groupBy = 'engineCombo';
+
+    // Date range
+    if ($year > 0) {
+        $startDate = "$year-01-01"; $endDate = "$year-12-31";
+    } else {
+        if ($startDate === '' || $endDate === '') rsa_jsonResponse(['error' => 'year or startDate+endDate required'], 400);
+    }
+
+    $useCategory = ($category !== '');
+    $classIndices = [];
+    $classPlaceholders = '';
+    if (!$useCategory) {
+        $classIndices = parity_expandClassIndex($pdo, $classIndex);
+        $classPlaceholders = implode(',', array_fill(0, count($classIndices), '?'));
+    }
+
+    // ── Load national combo lookup tables ─────────────────────────────────
+    $engineCombos = [];
+    $ecRows = $pdo->query("SELECT id, name, t_power, d_power, friction_factor FROM parity_engine_combos")->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($ecRows as $ec) $engineCombos[(int)$ec['id']] = $ec;
+
+    $driverCombos = $pdo->query("
+        SELECT dc.driver_name, dc.class_index, dc.engine_combo_id, ec.name AS engine_combo_name,
+               dc.effective_from_utc, dc.effective_to_utc
+        FROM parity_driver_combos dc JOIN parity_engine_combos ec ON ec.id = dc.engine_combo_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    $classDefaults = $pdo->query("
+        SELECT cd.class_index, cd.engine_combo_id, ec.name AS engine_combo_name,
+               cd.effective_from_utc, cd.effective_to_utc
+        FROM parity_class_defaults cd JOIN parity_engine_combos ec ON ec.id = cd.engine_combo_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    $driverBodyStyles = [];
+    if ($groupBy === 'bodyStyle') {
+        $driverBodyStyles = $pdo->query("
+            SELECT dbs.driver_name, dbs.class_index, dbs.body_style_id, bs.name AS body_style_name,
+                   dbs.effective_from_utc, dbs.effective_to_utc
+            FROM parity_driver_body_styles dbs JOIN parity_body_styles bs ON bs.id = dbs.body_style_id
+        ")->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    $sessionFilter = '';
+    if ($sessionScope === 'qual')     $sessionFilter = " AND r.round LIKE 'Q%'";
+    elseif ($sessionScope === 'elim') $sessionFilter = " AND r.round NOT LIKE 'Q%'";
+
+    $weatherWindow = 30;
+    $allComboNames = [];
+    $matrix = [];
+    $outEvents = [];
+
+    // ── Helper: compute aggregates for a combo's value list ───────────────
+    $computeCell = function(array $vals) use ($topN, $isLowerBetter): array {
+        if ($isLowerBetter) sort($vals); else rsort($vals);
+        $best = round($vals[0], 4);
+        $topSlice = array_slice($vals, 0, $topN);
+        $avgTopN = round(array_sum($topSlice) / count($topSlice), 4);
+        $cutoff = $isLowerBetter ? $best * 1.02 : $best * 0.98;
+        $filtered = array_values(array_filter($vals, fn($v) => $isLowerBetter ? $v <= $cutoff : $v >= $cutoff));
+        $totalAvg = count($filtered) > 0 ? round(array_sum($filtered) / count($filtered), 4) : null;
+        return ['best' => $best, 'avgTopN' => $avgTopN, 'totalAvg' => $totalAvg, 'count' => count($vals)];
+    };
+
+    // ── NATIONAL events ────────────────────────────────────────────────────
+    $evStmt = $pdo->prepare("
+        SELECT e.id, e.event_name, e.event_code, e.start_date_local, e.race_lookup,
+               t.track_name, t.city, t.state
+        FROM parity_events e JOIN parity_tracks t ON t.id = e.track_id
+        WHERE e.start_date_local BETWEEN ? AND ?
+        ORDER BY e.start_date_local ASC
+    ");
+    $evStmt->execute([$startDate, $endDate]);
+    $natEvents = $evStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $stmtWeatherNat = $pdo->prepare("
+        SELECT wc.temp_f, wc.rh_pct, wc.pressure_inhg
+        FROM parity_weather_canonical wc
+        WHERE wc.timestamp_utc BETWEEN DATE_SUB(?, INTERVAL ? MINUTE) AND DATE_ADD(?, INTERVAL ? MINUTE)
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, wc.timestamp_utc, ?)) ASC LIMIT 1
+    ");
+
+    foreach ($natEvents as $ev) {
+        $raceLookup = $ev['race_lookup']; if (!$raceLookup) continue;
+        if ($useCategory) {
+            $params = [$raceLookup, $category]; $classFilter = "r.category = ?";
+        } else {
+            $params = array_merge([$raceLookup], $classIndices);
+            $classFilter = "r.class_index IN ($classPlaceholders)";
+        }
+        $splitNullFilter = $isSplit ? " AND r.ft60 IS NOT NULL AND r.ft330 IS NOT NULL AND r.ft660 IS NOT NULL AND r.ft1000 IS NOT NULL AND r.ft1320 IS NOT NULL" : '';
+        $runStmt = $pdo->prepare("
+            SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+                   r.ft60, r.ft330, r.ft660, r.ft1000, r.ft1320, r.$dbCol AS metric_val
+            FROM parity_runs r
+            WHERE r.race_lookup = ? AND $classFilter
+              AND COALESCE(r.dq_flag, 0) = 0 AND r.$dbCol IS NOT NULL AND r.$dbCol > 0
+              AND NOT EXISTS (SELECT 1 FROM parity_run_flags f WHERE f.run_id = r.id AND f.flag_type IN ('bad','exclude'))
+              $splitNullFilter
+              $sessionFilter
+        ");
+        $runStmt->execute($params);
+        $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+        if (empty($runs)) continue;
+
+        $comboValues = [];
+        foreach ($runs as $run) {
+            if ($groupBy === 'bodyStyle') {
+                $resolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles);
+            } else {
+                $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+            }
+            if (!$resolved) continue;
+            $comboName = $resolved['name']; $comboId = $resolved['id'] ?? null;
+            $allComboNames[$comboName] = true;
+            $value = $isSplit
+                ? max(0.0, (float)$run[$splitToCol] - (float)$run[$splitFromCol])
+                : (float)$run['metric_val'];
+            if ($mode === 'corrected' && $groupBy === 'engineCombo' && $comboId && isset($engineCombos[$comboId]) && $run['run_timestamp_utc']) {
+                $stmtWeatherNat->execute([$run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
+                $wx = $stmtWeatherNat->fetch(PDO::FETCH_ASSOC);
+                if ($wx && $wx['temp_f']!==null) {
+                    $ec=$engineCombos[$comboId]; $T=(float)$wx['temp_f']; $H=(float)$wx['rh_pct']/100; $BP=(float)$wx['pressure_inhg'];
+                    $theta=($T+459.67)/519.67;
+                    $vp=$H*(29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152)));
+                    $delta=($BP-$vp)/29.92;
+                    $hpc=(1+(float)$ec['friction_factor']/100)*(pow($theta,(float)$ec['t_power'])/pow($delta,(float)$ec['d_power']))-(float)$ec['friction_factor']/100;
+                    if ($hpc>0 && is_finite($hpc)) $value=$isLowerBetter ? $value*pow($hpc,-0.33) : $value*pow($hpc,0.33);
+                }
+            }
+            $comboValues[$comboName][] = $value;
+        }
+        if (empty($comboValues)) continue;
+
+        $evId = (int)$ev['id'];
+        $matrix[$evId] = [];
+        foreach ($comboValues as $cn => $vals) $matrix[$evId][$cn] = $computeCell($vals);
+        $outEvents[] = ['eventId'=>$evId,'event_name'=>$ev['event_name'],'event_code'=>$ev['event_code']??null,'track_name'=>$ev['track_name'],'city'=>$ev['city'],'state'=>$ev['state'],'start_date_local'=>$ev['start_date_local'],'source'=>'national'];
+    }
+
+    // ── DIVISIONAL events ──────────────────────────────────────────────────
+    try {
+        $pdoDiv = getDivDB();
+
+        $divEvStmt = $pdoDiv->prepare("
+            SELECT e.id, e.event_name, e.event_code, e.start_date_local, e.nhra_division,
+                   t.track_name, t.city, t.state
+            FROM div_events e JOIN div_tracks t ON t.id = e.track_id
+            WHERE e.start_date_local BETWEEN ? AND ?
+            ORDER BY e.start_date_local ASC
+        ");
+        $divEvStmt->execute([$startDate, $endDate]);
+        $divEvents = $divEvStmt->fetchAll(PDO::FETCH_ASSOC);
+
+        $stmtWeatherDiv = $pdoDiv->prepare("
+            SELECT temp_f, rh_pct, pressure_inhg FROM div_weather_canonical
+            WHERE event_id = ?
+              AND bucket_utc BETWEEN DATE_SUB(?, INTERVAL ? MINUTE) AND DATE_ADD(?, INTERVAL ? MINUTE)
+            ORDER BY ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) ASC LIMIT 1
+        ");
+
+        foreach ($divEvents as $ev) {
+            $divEvId = (int)$ev['id'];
+            $filterParam = $useCategory ? $category : null;
+            $filterCol   = $useCategory ? 'r.category' : 'r.class_index';
+            if (!$useCategory) {
+                // For classIndex, use same expansion but against div_runs
+                $filterParam = $classIndex; // pass the raw classIndex for now
+            }
+            $divSplitNullFilter = $isSplit ? " AND r.ft60 IS NOT NULL AND r.ft330 IS NOT NULL AND r.ft660 IS NOT NULL AND r.ft1000 IS NOT NULL AND r.ft1320 IS NOT NULL" : '';
+            $runStmt = $pdoDiv->prepare("
+                SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+                       r.ft60, r.ft330, r.ft660, r.ft1000, r.ft1320, r.$dbCol AS metric_val
+                FROM div_runs r
+                WHERE r.event_id = ? AND $filterCol = ?
+                  AND COALESCE(r.dq_flag, 0) = 0 AND r.$dbCol IS NOT NULL AND r.$dbCol > 0
+                  $divSplitNullFilter
+                  $sessionFilter
+            ");
+            $runStmt->execute([$divEvId, $filterParam]);
+            $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+            if (empty($runs)) continue;
+
+            $comboValues = [];
+            foreach ($runs as $run) {
+                $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+                if (!$resolved) continue;
+                $comboName = $resolved['name']; $comboId = (int)$resolved['id'];
+                $allComboNames[$comboName] = true;
+                $value = $isSplit
+                    ? max(0.0, (float)$run[$splitToCol] - (float)$run[$splitFromCol])
+                    : (float)$run['metric_val'];
+                if ($mode === 'corrected' && $comboId && isset($engineCombos[$comboId]) && $run['run_timestamp_utc']) {
+                    $stmtWeatherDiv->execute([$divEvId, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
+                    $wx = $stmtWeatherDiv->fetch(PDO::FETCH_ASSOC);
+                    if ($wx && $wx['temp_f']!==null) {
+                        $ec=$engineCombos[$comboId]; $T=(float)$wx['temp_f']; $H=(float)$wx['rh_pct']/100; $BP=(float)$wx['pressure_inhg'];
+                        $theta=($T+459.67)/519.67;
+                        $vp=$H*(29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152)));
+                        $delta=($BP-$vp)/29.92;
+                        $hpc=(1+(float)$ec['friction_factor']/100)*(pow($theta,(float)$ec['t_power'])/pow($delta,(float)$ec['d_power']))-(float)$ec['friction_factor']/100;
+                        if ($hpc>0 && is_finite($hpc)) $value=$isLowerBetter ? $value*pow($hpc,-0.33) : $value*pow($hpc,0.33);
+                    }
+                }
+                $comboValues[$comboName][] = $value;
+            }
+            if (empty($comboValues)) continue;
+
+            $syntheticId = -$divEvId; // negative synthetic ID for divisional events
+            $matrix[$syntheticId] = [];
+            foreach ($comboValues as $cn => $vals) $matrix[$syntheticId][$cn] = $computeCell($vals);
+            $outEvents[] = ['eventId'=>$syntheticId,'event_name'=>$ev['event_name'],'event_code'=>$ev['event_code']??null,'track_name'=>$ev['track_name'],'city'=>$ev['city'],'state'=>$ev['state'],'start_date_local'=>$ev['start_date_local'],'source'=>'divisional:'.$ev['nhra_division']];
+        }
+    } catch (Exception $e) {
+        error_log("rangeParityMatrixUnified: div DB error: " . $e->getMessage());
+        // Continue with national-only data if div DB fails
+    }
+
+    // Sort output events by date
+    usort($outEvents, fn($a, $b) => $a['start_date_local'] <=> $b['start_date_local']);
+
+    // Filter to events that have matrix data
+    $outEvents = array_values(array_filter($outEvents, fn($e) => isset($matrix[$e['eventId']])));
+
+    $comboNamesSorted = array_keys($allComboNames); sort($comboNamesSorted);
+
+    rsa_jsonResponse([
+        'classIndex'    => $classIndex,
+        'metric'        => $metric,
+        'mode'          => $mode,
+        'topN'          => $topN,
+        'sessionScope'  => $sessionScope,
+        'groupBy'       => $groupBy,
+        'isLowerBetter' => $isLowerBetter,
+        'startDate'     => $startDate,
+        'endDate'       => $endDate,
+        'events'        => $outEvents,
+        'combos'        => $comboNamesSorted,
+        'matrix'        => $matrix,
     ]);
 }

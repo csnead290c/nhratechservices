@@ -1817,6 +1817,7 @@ export interface RangeParityEvent {
   city: string | null;
   state: string | null;
   start_date_local: string;
+  source?: string;
 }
 
 export interface RangeParityMatrixResponse {
@@ -2806,6 +2807,8 @@ export const parityApi = {
     groupBy?: 'engineCombo' | 'bodyStyle';
     includeFlagged?: boolean;
     includeUnknown?: boolean;
+    splitFrom?: string;
+    splitTo?: string;
   }): Promise<ParitySummaryResponse> {
     const qs = new URLSearchParams();
     qs.set('action', 'paritySummary');
@@ -2823,6 +2826,8 @@ export const parityApi = {
     if (params.groupBy) qs.set('groupBy', params.groupBy);
     if (params.includeFlagged) qs.set('includeFlagged', '1');
     if (params.includeUnknown) qs.set('includeUnknown', '1');
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
     return parityRequest<ParitySummaryResponse>(`/parity.php?${qs.toString()}`);
   },
 
@@ -2884,6 +2889,8 @@ export const parityApi = {
     mode?: 'raw' | 'corrected';
     sessionScope?: 'qual' | 'elim' | 'both';
     groupBy?: 'engineCombo' | 'bodyStyle';
+    splitFrom?: string;
+    splitTo?: string;
   }): Promise<ParityQualOrderResponse> {
     const qs = new URLSearchParams();
     qs.set('action', 'parityQualOrder');
@@ -2894,6 +2901,8 @@ export const parityApi = {
     if (params.mode) qs.set('mode', params.mode);
     if (params.sessionScope) qs.set('sessionScope', params.sessionScope);
     if (params.groupBy) qs.set('groupBy', params.groupBy);
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
     return parityRequest<ParityQualOrderResponse>(`/parity.php?${qs.toString()}`);
   },
 
@@ -2943,6 +2952,37 @@ export const parityApi = {
     return parityRequest<ParitySessionWeatherResponse>(`/parity.php?${qs.toString()}`);
   },
 
+  async rangeParityMatrixUnified(params: {
+    classIndex?: string;
+    category?: string;
+    metric?: string;
+    groupBy?: 'engineCombo' | 'bodyStyle';
+    mode?: 'raw' | 'corrected';
+    topN?: number;
+    sessionScope?: 'qual' | 'elim' | 'both';
+    year?: number;
+    startDate?: string;
+    endDate?: string;
+    splitFrom?: string;
+    splitTo?: string;
+  }): Promise<RangeParityMatrixResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'rangeParityMatrixUnified');
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.metric) qs.set('metric', params.metric);
+    if (params.mode) qs.set('mode', params.mode);
+    if (params.topN) qs.set('topN', String(params.topN));
+    if (params.sessionScope) qs.set('sessionScope', params.sessionScope);
+    if (params.groupBy) qs.set('groupBy', params.groupBy);
+    if (params.year) qs.set('year', String(params.year));
+    if (params.startDate) qs.set('startDate', params.startDate);
+    if (params.endDate) qs.set('endDate', params.endDate);
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
+    return parityRequest<RangeParityMatrixResponse>(`/parity.php?${qs.toString()}`);
+  },
+
   async rangeParityMatrix(params: {
     classIndex?: string;
     category?: string;
@@ -2954,6 +2994,8 @@ export const parityApi = {
     year?: number;
     startDate?: string;
     endDate?: string;
+    splitFrom?: string;
+    splitTo?: string;
   }): Promise<RangeParityMatrixResponse> {
     const qs = new URLSearchParams();
     qs.set('action', 'rangeParityMatrix');
@@ -2967,6 +3009,8 @@ export const parityApi = {
     if (params.year) qs.set('year', String(params.year));
     if (params.startDate) qs.set('startDate', params.startDate);
     if (params.endDate) qs.set('endDate', params.endDate);
+    if (params.splitFrom) qs.set('splitFrom', params.splitFrom);
+    if (params.splitTo) qs.set('splitTo', params.splitTo);
     return parityRequest<RangeParityMatrixResponse>(`/parity.php?${qs.toString()}`);
   },
 

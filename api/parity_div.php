@@ -128,6 +128,11 @@ try {
             handleRefreshDivEventData($pdoDiv, $userId, $auth);
             break;
 
+        case 'purgeDivWeather':
+            if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handlePurgeDivWeather($pdoDiv, $auth);
+            break;
+
         // ── Analysis endpoints (divisional equivalents) ────────────────────
         case 'divAnomalyAnalysis':
             if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
@@ -152,6 +157,26 @@ try {
         case 'divWeatherTimeseries':
             if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
             handleDivWeatherTimeseries($pdoDiv);
+            break;
+
+        case 'divParitySummary':
+            if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handleDivParitySummary($pdoDiv, $pdo);
+            break;
+
+        case 'divParityIncrementals':
+            if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handleDivParityIncrementals($pdoDiv, $pdo);
+            break;
+
+        case 'divParityQualOrder':
+            if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handleDivParityQualOrder($pdoDiv, $pdo);
+            break;
+
+        case 'divParitySessionWeather':
+            if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+            handleDivParitySessionWeather($pdoDiv);
             break;
 
         default:
@@ -924,6 +949,10 @@ function handleBackfillDivWeather(PDO $pdoDiv, array $auth): void {
     $startLocal = $event['start_date_local'];
     $endLocal   = $event['end_date_local'] ?: (new DateTime($startLocal))->modify('+3 days')->format('Y-m-d');
 
+    // Cap to start + 5 days (guard against bad end_date)
+    $maxEndLocal = (new DateTime($startLocal))->modify('+5 days')->format('Y-m-d');
+    if ($endLocal > $maxEndLocal) $endLocal = $maxEndLocal;
+
     // Cap to today
     $todayLocal = (new DateTime('now', new DateTimeZone($tz)))->format('Y-m-d');
     if ($endLocal > $todayLocal) $endLocal = $todayLocal;
@@ -1016,6 +1045,9 @@ function handleRefreshDivEventData(PDO $pdoDiv, int $userId, array $auth): void 
     $division   = $event['nhra_division'];
     $startLocal = $event['start_date_local'];
     $endLocal   = $event['end_date_local'] ?: (new DateTime($startLocal))->modify('+3 days')->format('Y-m-d');
+    // Cap to start + 5 days (guard against bad end_date)
+    $maxEndLocal = (new DateTime($startLocal))->modify('+5 days')->format('Y-m-d');
+    if ($endLocal > $maxEndLocal) $endLocal = $maxEndLocal;
     $todayLocal = (new DateTime('now', new DateTimeZone($tz)))->format('Y-m-d');
     if ($endLocal > $todayLocal) $endLocal = $todayLocal;
 
@@ -2325,4 +2357,615 @@ function handleDivRunsWithWeather(PDO $pdoDiv): void {
         'offset'        => $offset,
         'raceLookup'    => $raceLookup,
     ]);
+}
+
+// ============================================================================
+// POST ?action=purgeDivWeather
+// Body: { eventId: N }
+// Deletes all weather samples + canonical rows for a divisional event so the
+// backfill can be re-run cleanly.
+// ============================================================================
+
+function handlePurgeDivWeather(PDO $pdoDiv, array $auth): void {
+    requireDivAdminRole($auth);
+    $input = rsa_getJsonInput();
+    $eventId = (int)($input['eventId'] ?? 0);
+    if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
+
+    $s1 = $pdoDiv->prepare("DELETE FROM div_weather_samples WHERE event_id = ?");
+    $s1->execute([$eventId]);
+    $samplesDeleted = $s1->rowCount();
+
+    $s2 = $pdoDiv->prepare("DELETE FROM div_weather_canonical WHERE event_id = ?");
+    $s2->execute([$eventId]);
+    $canonicalDeleted = $s2->rowCount();
+
+    rsa_jsonResponse([
+        'ok' => true,
+        'eventId' => $eventId,
+        'samplesDeleted' => $samplesDeleted,
+        'canonicalDeleted' => $canonicalDeleted,
+    ]);
+}
+
+// ============================================================================
+// Shared helper: resolve engine combo from NATIONAL parity_driver_combos/
+// parity_class_defaults by driver_name + class_index (cross-DB).
+// $pdoMain is the main (national) DB connection.
+// Returns ['id' => int, 'name' => string] or null.
+// ============================================================================
+
+function divResolveCombo(PDO $pdoMain, ?string $driverName, ?string $classIndex, ?string $runTs): ?array {
+    static $driverCombos = null;
+    static $classDefaults = null;
+
+    if ($driverCombos === null) {
+        $driverCombos = $pdoMain->query("
+            SELECT dc.driver_name, dc.class_index, dc.engine_combo_id, ec.name AS engine_combo_name,
+                   dc.effective_from_utc, dc.effective_to_utc
+            FROM parity_driver_combos dc JOIN parity_engine_combos ec ON ec.id = dc.engine_combo_id
+        ")->fetchAll(PDO::FETCH_ASSOC);
+
+        $classDefaults = $pdoMain->query("
+            SELECT cd.class_index, cd.engine_combo_id, ec.name AS engine_combo_name,
+                   cd.effective_from_utc, cd.effective_to_utc
+            FROM parity_class_defaults cd JOIN parity_engine_combos ec ON ec.id = cd.engine_combo_id
+        ")->fetchAll(PDO::FETCH_ASSOC);
+    }
+
+    return resolveComboForRun($driverName, $classIndex, $runTs, $driverCombos, $classDefaults);
+}
+
+// Load all national engine combos + driver/class combo lookups (cached per request).
+function divLoadNationalCombos(PDO $pdoMain): array {
+    $engineCombos = [];
+    foreach ($pdoMain->query("SELECT id, name, t_power, d_power, friction_factor FROM parity_engine_combos")->fetchAll(PDO::FETCH_ASSOC) as $ec) {
+        $engineCombos[(int)$ec['id']] = $ec;
+    }
+    $driverCombos = $pdoMain->query("
+        SELECT dc.driver_name, dc.class_index, dc.engine_combo_id, ec.name AS engine_combo_name,
+               dc.effective_from_utc, dc.effective_to_utc
+        FROM parity_driver_combos dc JOIN parity_engine_combos ec ON ec.id = dc.engine_combo_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+    $classDefaults = $pdoMain->query("
+        SELECT cd.class_index, cd.engine_combo_id, ec.name AS engine_combo_name,
+               cd.effective_from_utc, cd.effective_to_utc
+        FROM parity_class_defaults cd JOIN parity_engine_combos ec ON ec.id = cd.engine_combo_id
+    ")->fetchAll(PDO::FETCH_ASSOC);
+
+    return [$engineCombos, $driverCombos, $classDefaults];
+}
+
+// Apply HPC weather correction to a value.
+function divApplyCorrection(float $rawValue, bool $isLowerBetter, array $ec, float $T, float $H_pct, float $BP): ?float {
+    $H = $H_pct / 100;
+    $tPow = (float)$ec['t_power']; $dPow = (float)$ec['d_power']; $FF = (float)$ec['friction_factor'];
+    $theta = ($T + 459.67) / 519.67;
+    $vp = $H * (29.98 / exp(35.83 * (212 - $T) / pow($T + 459.67, 1.152)));
+    $delta = ($BP - $vp) / 29.92;
+    $hpc = (1 + $FF / 100) * (pow($theta, $tPow) / pow($delta, $dPow)) - $FF / 100;
+    if (!($hpc > 0) || !is_finite($hpc)) return null;
+    return $isLowerBetter ? $rawValue * pow($hpc, -0.33) : $rawValue * pow($hpc, 0.33);
+}
+
+// ============================================================================
+// GET ?action=divParitySummary&eventId=N&category=X&metric=et_1320&mode=raw
+//     &topN=4&sessionScope=both&groupBy=engineCombo
+// Mirrors national paritySummary but queries div_runs + div_weather_canonical.
+// Combo lookup cross-DB from parity_driver_combos.
+// ============================================================================
+
+function handleDivParitySummary(PDO $pdoDiv, PDO $pdoMain): void {
+    $eventId      = (int)($_GET['eventId'] ?? 0);
+    $category     = trim($_GET['category'] ?? '');
+    $classIndex   = trim($_GET['classIndex'] ?? '');
+    $metric       = trim($_GET['metric'] ?? 'et_1320');
+    $mode         = trim($_GET['mode'] ?? 'raw');
+    $topN         = max(1, min(20, (int)($_GET['topN'] ?? 4)));
+    $sessionScope = trim($_GET['sessionScope'] ?? 'both');
+    $groupBy      = trim($_GET['groupBy'] ?? 'engineCombo');
+    $splitFrom    = trim($_GET['splitFrom'] ?? '');
+    $splitTo      = trim($_GET['splitTo'] ?? '');
+    $includeUnknown = (bool)($_GET['includeUnknown'] ?? false);
+
+    if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
+    if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'category or classIndex is required'], 400);
+
+    $isSplit = ($splitFrom !== '' && $splitTo !== '');
+    $splitColMap = ['t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','t1000'=>'ft1000','t1320'=>'ft1320'];
+    $colMap = ['et_1320'=>'ft1320','mph_1320'=>'mph1320','rt'=>'rt','t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','mph_660'=>'mph660','t1000'=>'ft1000','mph_1000'=>'mph1000'];
+
+    if ($isSplit) {
+        if (!isset($splitColMap[$splitFrom]) || !isset($splitColMap[$splitTo])) rsa_jsonResponse(['error' => 'Invalid splitFrom/splitTo'], 400);
+        $splitFromCol = $splitColMap[$splitFrom];
+        $splitToCol   = $splitColMap[$splitTo];
+        $isLowerBetter = true;
+        $dbCol = $splitToCol; // primary filter col (must be non-null)
+        $metric = "split_{$splitFrom}_{$splitTo}";
+    } else {
+        $validMetrics = ['et_1320','mph_1320','rt','t60','t330','t660','mph_660','t1000','mph_1000'];
+        if (!in_array($metric, $validMetrics)) rsa_jsonResponse(['error' => 'Invalid metric'], 400);
+        $dbCol = $colMap[$metric];
+        $isLowerBetter = !in_array($metric, ['mph_1320','mph_660','mph_1000']);
+        $splitFromCol = null; $splitToCol = null;
+    }
+    if (!in_array($mode, ['raw','corrected'])) rsa_jsonResponse(['error' => 'mode must be raw or corrected'], 400);
+    if (!in_array($sessionScope, ['qual','elim','both'])) rsa_jsonResponse(['error' => 'invalid sessionScope'], 400);
+
+    // Load div event
+    $evStmt = $pdoDiv->prepare("
+        SELECT e.id, e.event_name, e.start_date_local, e.end_date_local, e.nhra_division,
+               t.track_name, t.city, t.state, t.latitude, t.longitude
+        FROM div_events e JOIN div_tracks t ON t.id = e.track_id WHERE e.id = ?
+    ");
+    $evStmt->execute([$eventId]);
+    $event = $evStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$event) rsa_jsonResponse(['error' => 'Event not found'], 404);
+
+    // Load national combos
+    [$engineCombos, $driverCombos, $classDefaults] = divLoadNationalCombos($pdoMain);
+
+    $sessionFilter = '';
+    if ($sessionScope === 'qual')     $sessionFilter = " AND r.round LIKE 'Q%'";
+    elseif ($sessionScope === 'elim') $sessionFilter = " AND r.round NOT LIKE 'Q%'";
+
+    $filterParam = $category !== '' ? $category : $classIndex;
+    $filterCol   = $category !== '' ? 'r.category' : 'r.class_index';
+
+    $sortDir = $isLowerBetter ? 'ASC' : 'DESC';
+    $nullCheck = $isSplit ? "r.$splitFromCol IS NOT NULL AND r.$splitToCol IS NOT NULL AND r.$splitToCol > r.$splitFromCol" : "r.$dbCol IS NOT NULL AND r.$dbCol > 0";
+
+    $runStmt = $pdoDiv->prepare("
+        SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+               r.round, r.lane, r.car_number, r.rt,
+               r.ft60, r.ft330, r.ft660, r.mph660, r.ft1000, r.mph1000, r.ft1320, r.mph1320,
+               COALESCE(r.dq_flag, 0) AS dq_flag
+        FROM div_runs r
+        WHERE r.event_id = ? AND $filterCol = ?
+          AND COALESCE(r.dq_flag, 0) = 0 AND $nullCheck $sessionFilter
+        ORDER BY r.$dbCol $sortDir
+    ");
+    $runStmt->execute([$eventId, $filterParam]);
+    $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Weather lookup
+    $weatherWindow = 30;
+    $stmtWeather = $pdoDiv->prepare("
+        SELECT temp_f, rh_pct, pressure_inhg, bucket_utc AS timestamp_utc
+        FROM div_weather_canonical
+        WHERE event_id = ?
+          AND bucket_utc BETWEEN DATE_SUB(?, INTERVAL ? MINUTE) AND DATE_ADD(?, INTERVAL ? MINUTE)
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) ASC LIMIT 1
+    ");
+
+    $totalRuns = count($runs); $runsWithWeather = 0; $runsWithCorrected = 0;
+    $comboRuns = []; $allRunsFlat = []; $unknownDriverCounts = [];
+    $totalMapped = 0; $totalUnmapped = 0;
+
+    foreach ($runs as $run) {
+        $rawValue = $isSplit
+            ? ((float)$run[$splitToCol] - (float)$run[$splitFromCol])
+            : (float)$run[$dbCol];
+
+        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+        $comboName = $resolved ? $resolved['name'] : 'Unknown';
+        $comboId   = $resolved ? (int)$resolved['id'] : null;
+        if ($resolved) $totalMapped++; else { $totalUnmapped++; $dk = $run['driver_name'] ?? ''; $unknownDriverCounts[$dk] = ($unknownDriverCounts[$dk] ?? 0) + 1; }
+
+        $wxSnapshot = null;
+        if ($run['run_timestamp_utc']) {
+            $stmtWeather->execute([$eventId, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
+            $wx = $stmtWeather->fetch(PDO::FETCH_ASSOC);
+            if ($wx && $wx['temp_f'] !== null && $wx['rh_pct'] !== null && $wx['pressure_inhg'] !== null) {
+                $wxSnapshot = ['temp_f'=>round((float)$wx['temp_f'],1),'rh_pct'=>round((float)$wx['rh_pct'],1),'pressure_inhg'=>round((float)$wx['pressure_inhg'],3),'source'=>'div_canonical','timestamp_utc'=>$wx['timestamp_utc']];
+                $runsWithWeather++;
+            }
+        }
+
+        $value = $rawValue; $correctionFactor = null;
+        if ($mode === 'corrected' && $wxSnapshot && $comboId && isset($engineCombos[$comboId])) {
+            $T = $wxSnapshot['temp_f']; $H = $wxSnapshot['rh_pct'] / 100; $BP = $wxSnapshot['pressure_inhg'];
+            $ec = $engineCombos[$comboId];
+            $tPow=(float)$ec['t_power']; $dPow=(float)$ec['d_power']; $FF=(float)$ec['friction_factor'];
+            $theta = ($T+459.67)/519.67;
+            $vp = $H*(29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152)));
+            $delta = ($BP-$vp)/29.92;
+            $hpc = (1+$FF/100)*(pow($theta,$tPow)/pow($delta,$dPow))-$FF/100;
+            if ($hpc>0 && is_finite($hpc)) {
+                $correctionFactor = $hpc;
+                $value = $isLowerBetter ? $rawValue*pow($hpc,-0.33) : $rawValue*pow($hpc,0.33);
+                $runsWithCorrected++;
+            }
+        }
+
+        $entry = [
+            'runId'=>(int)$run['id'], 'uuid'=>null, 'driver'=>$run['driver_name'],
+            'classIndex'=>$run['class_index'], 'round'=>$run['round'], 'lane'=>$run['lane'],
+            'carNumber'=>$run['car_number'], 'timestamp'=>$run['run_timestamp_utc'],
+            'rawValue'=>round($rawValue,4), 'value'=>round($value,4),
+            'correctionFactor'=>$correctionFactor ? round($correctionFactor,6) : null,
+            'excluded'=>false, 'flagged'=>false, 'dqFlag'=>(int)$run['dq_flag'],
+            'weather'=>$wxSnapshot, 'engineCombo'=>$comboName, 'engineComboId'=>$comboId,
+            'actualEngineCombo'=>$comboName, 'eventId'=>$eventId,
+            'et'=>($correctionFactor && $run['ft1320']!==null) ? round((float)$run['ft1320']*pow($correctionFactor,-0.33),4) : ($run['ft1320']!==null ? round((float)$run['ft1320'],4) : null),
+            'mph'=>($correctionFactor && $run['mph1320']!==null) ? round((float)$run['mph1320']*pow($correctionFactor,0.33),2) : ($run['mph1320']!==null ? round((float)$run['mph1320'],2) : null),
+        ];
+        if (!isset($comboRuns[$comboName])) $comboRuns[$comboName] = ['id'=>$comboId,'runs'=>[]];
+        $comboRuns[$comboName]['runs'][] = $entry;
+        $allRunsFlat[] = $entry;
+    }
+
+    // Build combo aggregates (mirrors parity_buildComboAggregates)
+    $combos = [];
+    foreach ($comboRuns as $comboName => $data) {
+        if ($comboName === 'Unknown' && !$includeUnknown) continue;
+        $activeRuns = array_values(array_filter($data['runs'], fn($r) => !$r['excluded']));
+        usort($activeRuns, fn($a,$b) => $isLowerBetter ? ($a['value']<=>$b['value']) : ($b['value']<=>$a['value']));
+        $activeValues = array_map(fn($r)=>$r['value'], $activeRuns);
+        $countActive = count($activeRuns);
+        $bestValue = $countActive>0 ? round($activeValues[0],4) : null;
+        $topSlice = array_slice($activeValues,0,$topN);
+        $avgTopN = count($topSlice)>0 ? round(array_sum($topSlice)/count($topSlice),4) : null;
+        $WITHIN=0.02; $totalAvg=null;
+        if ($bestValue!==null && $countActive>0) {
+            $filtered=$isLowerBetter ? array_filter($activeValues,fn($v)=>$v<=$bestValue*(1+$WITHIN)) : array_filter($activeValues,fn($v)=>$v>=$bestValue*(1-$WITHIN));
+            $filtered=array_values($filtered);
+            if (count($filtered)>0) $totalAvg=round(array_sum($filtered)/count($filtered),4);
+        }
+        $spread=null;
+        if (count($topSlice)>=2) {
+            $last=count($topSlice)-1;
+            $spread=$isLowerBetter ? round($topSlice[$last]-$topSlice[0],4) : round($topSlice[0]-$topSlice[$last],4);
+        }
+        $combos[] = [
+            'engineCombo'=>$comboName,'engineComboId'=>$data['id'],
+            'bestValue'=>$bestValue,'avgTopN'=>$avgTopN,'totalAvg'=>$totalAvg,
+            'spread'=>$spread,'countTopN'=>count($topSlice),'countTotal'=>count($data['runs']),
+            'countActive'=>$countActive,'countExcluded'=>0,'countTotalAvg'=>0,
+            'weatherCoveragePct'=>null,'topRuns'=>array_slice($activeRuns,0,$topN),
+        ];
+    }
+    usort($combos, fn($a,$b) => match(true) {
+        $a['bestValue']===null=>1, $b['bestValue']===null=>-1,
+        default=>$isLowerBetter ? ($a['bestValue']<=>$b['bestValue']) : ($b['bestValue']<=>$a['bestValue']),
+    });
+
+    $mappedTotal = $totalMapped+$totalUnmapped;
+    $mappedPct = $mappedTotal>0 ? round(100*$totalMapped/$mappedTotal,1) : null;
+    arsort($unknownDriverCounts); $topMissing=[];
+    foreach (array_slice($unknownDriverCounts,0,10,true) as $dn=>$cnt) $topMissing[]=['driver'=>$dn,'runCount'=>$cnt];
+
+    rsa_jsonResponse([
+        'eventId'=>$eventId,'classIndex'=>$classIndex,'metric'=>$metric,
+        'mode'=>$mode,'topN'=>$topN,'sessionScope'=>$sessionScope,'groupBy'=>$groupBy,
+        'includeFlagged'=>false,'includeUnknown'=>$includeUnknown,'isLowerBetter'=>$isLowerBetter,
+        'isMultiEvent'=>false,'eventIds'=>[$eventId],'eventCount'=>1,
+        'event'=>['event_name'=>$event['event_name'],'track_name'=>$event['track_name'],'city'=>$event['city'],'state'=>$event['state'],'start_date_local'=>$event['start_date_local'],'end_date_local'=>$event['end_date_local']],
+        'allEvents'=>null,
+        'trust'=>['weatherCoveragePct'=>$totalRuns>0?round(100*$runsWithWeather/$totalRuns,1):null,'correctedCoveragePct'=>($mode==='corrected'&&$totalRuns>0)?round(100*$runsWithCorrected/$totalRuns,1):null,'totalRunsInScope'=>$totalRuns,'runsWithWeather'=>$runsWithWeather,'runsWithCorrected'=>$runsWithCorrected,'hasTrackCoords'=>($event['latitude']!==null&&$event['longitude']!==null),'hasSlopeData'=>false],
+        'mapping'=>['mappedPct'=>$mappedPct,'mappedRunCount'=>$totalMapped,'unknownRunCount'=>$totalUnmapped,'topMissingDrivers'=>$topMissing],
+        'combos'=>$combos,'totalRunsInClass'=>$totalRuns,
+    ]);
+}
+
+// ============================================================================
+// GET ?action=divParityIncrementals&eventId=N&category=X&sessionScope=both
+// Mirrors national parityIncrementals but queries div_runs + div_weather_canonical.
+// ============================================================================
+
+function handleDivParityIncrementals(PDO $pdoDiv, PDO $pdoMain): void {
+    $eventId      = (int)($_GET['eventId'] ?? 0);
+    $category     = trim($_GET['category'] ?? '');
+    $classIndex   = trim($_GET['classIndex'] ?? '');
+    $sessionScope = trim($_GET['sessionScope'] ?? 'both');
+    $mode         = trim($_GET['mode'] ?? 'raw');
+    $groupBy      = trim($_GET['groupBy'] ?? 'engineCombo');
+    $includeUnknown = (bool)($_GET['includeUnknown'] ?? false);
+
+    if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
+    if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'category or classIndex is required'], 400);
+    if (!in_array($mode, ['raw','corrected'])) $mode = 'raw';
+
+    [$engineCombos, $driverCombos, $classDefaults] = divLoadNationalCombos($pdoMain);
+
+    $sessionFilter = '';
+    if ($sessionScope === 'qual')     $sessionFilter = " AND r.round LIKE 'Q%'";
+    elseif ($sessionScope === 'elim') $sessionFilter = " AND r.round NOT LIKE 'Q%'";
+
+    $filterParam = $category !== '' ? $category : $classIndex;
+    $filterCol   = $category !== '' ? 'r.category' : 'r.class_index';
+
+    $runStmt = $pdoDiv->prepare("
+        SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+               r.round, r.ft60, r.ft330, r.ft660, r.mph660, r.ft1000, r.mph1000, r.ft1320, r.mph1320,
+               COALESCE(r.dq_flag, 0) AS dq_flag
+        FROM div_runs r
+        WHERE r.event_id = ? AND $filterCol = ? AND COALESCE(r.dq_flag, 0) = 0 $sessionFilter
+    ");
+    $runStmt->execute([$eventId, $filterParam]);
+    $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $weatherWindow = 30;
+    $stmtWeather = ($mode === 'corrected') ? $pdoDiv->prepare("
+        SELECT temp_f, rh_pct, pressure_inhg FROM div_weather_canonical
+        WHERE event_id = ? AND ABS(TIMESTAMPDIFF(MINUTE, bucket_utc, ?)) <= ?
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) ASC LIMIT 1
+    ") : null;
+
+    $incrementals = [
+        ['label'=>'60 ft',       'key'=>'t60',         'dbCol'=>'ft60',    'isLower'=>true],
+        ['label'=>'330 ft',      'key'=>'t330',        'dbCol'=>'ft330',   'isLower'=>true],
+        ['label'=>'660 ft',      'key'=>'t660',        'dbCol'=>'ft660',   'isLower'=>true],
+        ['label'=>'660 MPH',     'key'=>'mph660',      'dbCol'=>'mph660',  'isLower'=>false],
+        ['label'=>'1000 ft',     'key'=>'t1000',       'dbCol'=>'ft1000',  'isLower'=>true],
+        ['label'=>'1000 MPH',    'key'=>'mph1000',     'dbCol'=>'mph1000', 'isLower'=>false],
+        ['label'=>'1320 ft',     'key'=>'t1320',       'dbCol'=>'ft1320',  'isLower'=>true],
+        ['label'=>'1320 MPH',    'key'=>'mph1320',     'dbCol'=>'mph1320', 'isLower'=>false],
+        ['label'=>'Last 1/8 ET', 'key'=>'backhalf_et', 'dbCol'=>null,      'isLower'=>true],
+        ['label'=>'Last 1/8 MPH','key'=>'backhalf_mph','dbCol'=>null,      'isLower'=>false],
+    ];
+
+    $comboIncrementals = []; $allComboNames = [];
+    foreach ($runs as $run) {
+        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+        $comboName = $resolved ? $resolved['name'] : 'Unknown';
+        $comboId   = $resolved ? (int)$resolved['id'] : 0;
+        if ($comboName === 'Unknown' && !$includeUnknown) continue;
+
+        $hpc = null;
+        if ($mode === 'corrected' && $comboId && isset($engineCombos[$comboId]) && $stmtWeather && $run['run_timestamp_utc']) {
+            $stmtWeather->execute([$eventId, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
+            $wx = $stmtWeather->fetch(PDO::FETCH_ASSOC);
+            if ($wx && $wx['temp_f']!==null && $wx['rh_pct']!==null && $wx['pressure_inhg']!==null) {
+                $T=(float)$wx['temp_f']; $H=(float)$wx['rh_pct']/100; $BP=(float)$wx['pressure_inhg'];
+                $ec=$engineCombos[$comboId];
+                $theta=($T+459.67)/519.67;
+                $vp=$H*(29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152)));
+                $delta=($BP-$vp)/29.92;
+                $h=(1+(float)$ec['friction_factor']/100)*(pow($theta,(float)$ec['t_power'])/pow($delta,(float)$ec['d_power']))-(float)$ec['friction_factor']/100;
+                if ($h>0 && is_finite($h)) $hpc=$h;
+            }
+        }
+
+        $allComboNames[$comboName] = true;
+        if (!isset($comboIncrementals[$comboName])) $comboIncrementals[$comboName] = [];
+        foreach ($incrementals as $inc) {
+            $val = null;
+            if ($inc['key']==='backhalf_et') {
+                if ($run['ft660']!==null && $run['ft1320']!==null) $val=(float)$run['ft1320']-(float)$run['ft660'];
+            } elseif ($inc['key']==='backhalf_mph') {
+                if ($run['mph1320']!==null && $run['mph660']!==null) $val=(float)$run['mph1320']-(float)$run['mph660'];
+            } else {
+                $val = $run[$inc['dbCol']];
+            }
+            if ($val!==null && (float)$val>0) {
+                $raw=(float)$val;
+                if ($hpc!==null) $raw=$inc['isLower'] ? $raw*pow($hpc,-0.33) : $raw*pow($hpc,0.33);
+                $comboIncrementals[$comboName][$inc['key']][] = $raw;
+            }
+        }
+    }
+
+    $comboNames = array_keys($allComboNames); sort($comboNames);
+    $rows = [];
+    foreach ($incrementals as $inc) {
+        $row = ['label'=>$inc['label'],'key'=>$inc['key'],'isLowerBetter'=>$inc['isLower'],'values'=>[]];
+        foreach ($comboNames as $cn) {
+            $vals = $comboIncrementals[$cn][$inc['key']] ?? [];
+            $row['values'][$cn] = empty($vals) ? null : ($inc['isLower'] ? round(min($vals),4) : round(max($vals),4));
+        }
+        $rows[] = $row;
+    }
+
+    rsa_jsonResponse(['eventId'=>$eventId,'classIndex'=>$classIndex,'sessionScope'=>$sessionScope,'combos'=>$comboNames,'rows'=>$rows]);
+}
+
+// ============================================================================
+// GET ?action=divParityQualOrder&eventId=N&category=X&metric=et_1320&mode=raw
+// Mirrors national parityQualOrder.
+// ============================================================================
+
+function handleDivParityQualOrder(PDO $pdoDiv, PDO $pdoMain): void {
+    $eventId      = (int)($_GET['eventId'] ?? 0);
+    $category     = trim($_GET['category'] ?? '');
+    $classIndex   = trim($_GET['classIndex'] ?? '');
+    $metric       = trim($_GET['metric'] ?? 'et_1320');
+    $mode         = trim($_GET['mode'] ?? 'raw');
+    $sessionScope = trim($_GET['sessionScope'] ?? 'both');
+    $splitFrom    = trim($_GET['splitFrom'] ?? '');
+    $splitTo      = trim($_GET['splitTo'] ?? '');
+
+    if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
+    if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'category or classIndex is required'], 400);
+
+    $isSplit = ($splitFrom !== '' && $splitTo !== '');
+    $splitColMap = ['t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','t1000'=>'ft1000','t1320'=>'ft1320'];
+    $colMap = ['et_1320'=>'ft1320','mph_1320'=>'mph1320','rt'=>'rt','t60'=>'ft60','t330'=>'ft330','t660'=>'ft660','mph_660'=>'mph660','t1000'=>'ft1000','mph_1000'=>'mph1000'];
+    if ($isSplit) {
+        if (!isset($splitColMap[$splitFrom]) || !isset($splitColMap[$splitTo])) rsa_jsonResponse(['error' => 'Invalid split'], 400);
+        $dbCol = $splitColMap[$splitTo]; $isLowerBetter = true;
+        $metric = "split_{$splitFrom}_{$splitTo}";
+        $splitFromCol = $splitColMap[$splitFrom]; $splitToCol = $splitColMap[$splitTo];
+    } else {
+        $dbCol = $colMap[$metric] ?? 'ft1320'; $isLowerBetter = !in_array($metric, ['mph_1320','mph_660','mph_1000']);
+        $splitFromCol = null; $splitToCol = null;
+    }
+
+    [$engineCombos, $driverCombos, $classDefaults] = divLoadNationalCombos($pdoMain);
+
+    $filterParam = $category !== '' ? $category : $classIndex;
+    $filterCol   = $category !== '' ? 'r.category' : 'r.class_index';
+    $nullCheck = $isSplit ? "r.$splitFromCol IS NOT NULL AND r.$splitToCol IS NOT NULL AND r.$splitToCol > r.$splitFromCol" : "r.$dbCol IS NOT NULL AND r.$dbCol > 0";
+    $sessionFilter = '';
+    if ($sessionScope === 'qual')     $sessionFilter = " AND r.round LIKE 'Q%'";
+    elseif ($sessionScope === 'elim') $sessionFilter = " AND r.round NOT LIKE 'Q%'";
+    $sortDir = $isLowerBetter ? 'ASC' : 'DESC';
+
+    $runStmt = $pdoDiv->prepare("
+        SELECT r.id, r.run_timestamp_utc, r.driver_name, r.class_index,
+               r.round, r.lane, r.car_number,
+               r.ft60, r.ft330, r.ft660, r.mph660, r.ft1000, r.mph1000, r.ft1320, r.mph1320, r.rt,
+               COALESCE(r.dq_flag, 0) AS dq_flag
+        FROM div_runs r
+        WHERE r.event_id = ? AND $filterCol = ?
+          AND COALESCE(r.dq_flag, 0) = 0 AND $nullCheck $sessionFilter
+        ORDER BY r.$dbCol $sortDir
+    ");
+    $runStmt->execute([$eventId, $filterParam]);
+    $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $weatherWindow = 30;
+    $stmtWeather = $pdoDiv->prepare("
+        SELECT temp_f, rh_pct, pressure_inhg FROM div_weather_canonical
+        WHERE event_id = ? AND ABS(TIMESTAMPDIFF(MINUTE, bucket_utc, ?)) <= ?
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) ASC LIMIT 1
+    ");
+
+    $allRunsFlat = [];
+    foreach ($runs as $run) {
+        $rawValue = $isSplit ? ((float)$run[$splitToCol]-(float)$run[$splitFromCol]) : (float)$run[$dbCol];
+        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+        $comboName = $resolved ? $resolved['name'] : 'Unknown';
+        $comboId   = $resolved ? (int)$resolved['id'] : null;
+
+        $wxSnapshot = null;
+        if ($run['run_timestamp_utc']) {
+            $stmtWeather->execute([$eventId, $run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
+            $wx = $stmtWeather->fetch(PDO::FETCH_ASSOC);
+            if ($wx && $wx['temp_f']!==null) $wxSnapshot=['temp_f'=>(float)$wx['temp_f'],'rh_pct'=>(float)$wx['rh_pct'],'pressure_inhg'=>(float)$wx['pressure_inhg']];
+        }
+
+        $value = $rawValue; $correctionFactor = null;
+        if ($mode === 'corrected' && $wxSnapshot && $comboId && isset($engineCombos[$comboId])) {
+            $ec=$engineCombos[$comboId]; $T=$wxSnapshot['temp_f']; $H=$wxSnapshot['rh_pct']/100; $BP=$wxSnapshot['pressure_inhg'];
+            $theta=($T+459.67)/519.67;
+            $vp=$H*(29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152)));
+            $delta=($BP-$vp)/29.92;
+            $hpc=(1+(float)$ec['friction_factor']/100)*(pow($theta,(float)$ec['t_power'])/pow($delta,(float)$ec['d_power']))-(float)$ec['friction_factor']/100;
+            if ($hpc>0 && is_finite($hpc)) { $correctionFactor=$hpc; $value=$isLowerBetter ? $rawValue*pow($hpc,-0.33) : $rawValue*pow($hpc,0.33); }
+        }
+
+        $et_corr = ($correctionFactor && $run['ft1320']!==null) ? round((float)$run['ft1320']*pow($correctionFactor,-0.33),4) : ($run['ft1320']!==null ? round((float)$run['ft1320'],4) : null);
+        $mph_corr = ($correctionFactor && $run['mph1320']!==null) ? round((float)$run['mph1320']*pow($correctionFactor,0.33),2) : ($run['mph1320']!==null ? round((float)$run['mph1320'],2) : null);
+
+        $allRunsFlat[] = [
+            'runId'=>(int)$run['id'],'uuid'=>null,'driver'=>$run['driver_name'],'classIndex'=>$run['class_index'],
+            'round'=>$run['round'],'lane'=>$run['lane'],'carNumber'=>$run['car_number'],
+            'timestamp'=>$run['run_timestamp_utc'],'rawValue'=>round($rawValue,4),'value'=>round($value,4),
+            'correctionFactor'=>$correctionFactor ? round($correctionFactor,6) : null,
+            'excluded'=>false,'flagged'=>false,'dqFlag'=>(int)$run['dq_flag'],
+            'weather'=>$wxSnapshot,'engineCombo'=>$comboName,'engineComboId'=>$comboId,
+            'actualEngineCombo'=>$comboName,'eventId'=>$eventId,'et'=>$et_corr,'mph'=>$mph_corr,
+        ];
+    }
+
+    // Best per driver (use metric-aware 'value', not hardcoded 'et')
+    $driverBest = [];
+    foreach ($allRunsFlat as $r) {
+        $dn = $r['driver'];
+        $isBetter = !isset($driverBest[$dn]);
+        if (!$isBetter) {
+            $prev = $driverBest[$dn];
+            $isBetter = $isLowerBetter ? ($r['value'] < $prev['value']) : ($r['value'] > $prev['value']);
+            if (!$isBetter && $r['value'] === $prev['value']) {
+                $isBetter = ($r['timestamp'] ?? '') < ($prev['timestamp'] ?? '');
+            }
+        }
+        if ($isBetter) $driverBest[$dn] = $r;
+    }
+    $qualOrder = array_values($driverBest);
+    usort($qualOrder, function($a, $b) use ($isLowerBetter) {
+        if ($a['value']===null && $b['value']===null) return 0;
+        if ($a['value']===null) return 1; if ($b['value']===null) return -1;
+        return $isLowerBetter ? ($a['value'] <=> $b['value']) : ($b['value'] <=> $a['value']);
+    });
+    foreach ($qualOrder as $idx => &$qr) { $qr['qualPosition'] = $idx+1; $qr['bodyStyle']=null; $qr['bodyStyleId']=null; }
+    unset($qr);
+
+    rsa_jsonResponse(['eventId'=>$eventId,'classIndex'=>$classIndex,'metric'=>$metric,'mode'=>$mode,'sessionScope'=>$sessionScope,'isLowerBetter'=>$isLowerBetter,'qualOrder'=>$qualOrder]);
+}
+
+// ============================================================================
+// GET ?action=divParitySessionWeather&eventId=N&category=X
+// Mirrors national paritySessionWeather using div_weather_canonical.
+// ============================================================================
+
+function handleDivParitySessionWeather(PDO $pdoDiv): void {
+    $eventId    = (int)($_GET['eventId'] ?? 0);
+    $category   = trim($_GET['category'] ?? '');
+    $classIndex = trim($_GET['classIndex'] ?? '');
+
+    if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
+    if ($category === '' && $classIndex === '') rsa_jsonResponse(['error' => 'category or classIndex is required'], 400);
+
+    $evStmt = $pdoDiv->prepare("
+        SELECT e.id, t.timezone_iana FROM div_events e JOIN div_tracks t ON t.id = e.track_id WHERE e.id = ?
+    ");
+    $evStmt->execute([$eventId]);
+    $event = $evStmt->fetch(PDO::FETCH_ASSOC);
+    if (!$event) rsa_jsonResponse(['error' => 'Event not found'], 404);
+    $trackTz = $event['timezone_iana'] ?? 'America/New_York';
+
+    $filterParam = $category !== '' ? $category : $classIndex;
+    $filterCol   = $category !== '' ? 'r.category' : 'r.class_index';
+
+    $runStmt = $pdoDiv->prepare("
+        SELECT r.run_timestamp_utc, r.round
+        FROM div_runs r
+        WHERE r.event_id = ? AND $filterCol = ?
+          AND COALESCE(r.dq_flag, 0) = 0
+          AND r.run_timestamp_utc IS NOT NULL AND r.round IS NOT NULL AND r.round != ''
+        ORDER BY r.round, r.run_timestamp_utc
+    ");
+    $runStmt->execute([$eventId, $filterParam]);
+    $runs = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $weatherWindow = 30;
+    $stmtWeather = $pdoDiv->prepare("
+        SELECT temp_f, rh_pct, pressure_inhg,
+               ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) AS offset_seconds
+        FROM div_weather_canonical
+        WHERE event_id = ?
+          AND bucket_utc BETWEEN DATE_SUB(?, INTERVAL ? MINUTE) AND DATE_ADD(?, INTERVAL ? MINUTE)
+        ORDER BY ABS(TIMESTAMPDIFF(SECOND, bucket_utc, ?)) ASC LIMIT 1
+    ");
+
+    $sessionData = []; $totalRuns = count($runs); $matchedRuns = 0; $allOffsets = [];
+    foreach ($runs as $run) {
+        $ts = $run['run_timestamp_utc']; $round = $run['round'];
+        $stmtWeather->execute([$ts, $eventId, $ts, $weatherWindow, $ts, $weatherWindow, $ts]);
+        $wx = $stmtWeather->fetch(PDO::FETCH_ASSOC);
+        if (!$wx || $wx['temp_f']===null) continue;
+        $matchedRuns++; $allOffsets[] = (int)$wx['offset_seconds'];
+        if (!isset($sessionData[$round])) $sessionData[$round] = [];
+        $sessionData[$round][] = ['temp_f'=>(float)$wx['temp_f'],'rh_pct'=>(float)$wx['rh_pct'],'pressure_inhg'=>(float)$wx['pressure_inhg'],'offset_s'=>(int)$wx['offset_seconds']];
+    }
+
+    $sessionOrder = fn($a,$b) => (strpos($a,'Q')===0 && strpos($b,'Q')!==0) ? -1 : ((strpos($a,'Q')!==0 && strpos($b,'Q')===0) ? 1 : $a<=>$b);
+    $rounds = array_keys($sessionData); usort($rounds, $sessionOrder);
+
+    $rows = [];
+    foreach ($rounds as $round) {
+        $samples = $sessionData[$round]; $n = count($samples);
+        $avgTemp = array_sum(array_column($samples,'temp_f'))/$n;
+        $avgRH   = array_sum(array_column($samples,'rh_pct'))/$n;
+        $avgPress= array_sum(array_column($samples,'pressure_inhg'))/$n;
+        $avgOffset = array_sum(array_column($samples,'offset_s'))/$n;
+
+        $T=$avgTemp; $H=$avgRH/100; $BP=$avgPress;
+        $svp=29.98/exp(35.83*(212-$T)/pow($T+459.67,1.152));
+        $vp=$H*$svp; $dap=$BP-$vp;
+        $ad=1736.86*$dap/($T+459.67);
+        $densityAlt=round(145723*(1-pow($ad/100,0.234944)),0);
+        $tempC=($T-32)*(5.0/9.0); $tempK=$tempC+273.15;
+        $hpc=round(1.176*(1013.20690822892/($dap/0.02953))*pow($tempK/288.705555555556,0.5)-0.176,4);
+
+        $rows[] = ['session'=>$round,'runCount'=>$n,'temp_f'=>round($avgTemp,1),'rh_pct'=>round($avgRH,1),'pressure_inhg'=>round($avgPress,3),'density_alt_ft'=>(int)$densityAlt,'hpc'=>$hpc,'wind_speed_mph'=>null,'wind_dir_deg'=>null,'avgOffsetMin'=>round($avgOffset/60,1),'localTimeHint'=>null];
+    }
+
+    $pctMatched = $totalRuns>0 ? round(100*$matchedRuns/$totalRuns,1) : null;
+    $avgOffsetMin = count($allOffsets)>0 ? round((array_sum($allOffsets)/count($allOffsets))/60,1) : null;
+    $maxOffsetMin = count($allOffsets)>0 ? round(max($allOffsets)/60,1) : null;
+
+    rsa_jsonResponse(['eventId'=>$eventId,'classIndex'=>$classIndex,'trackTimezone'=>$trackTz,'sessions'=>$rows,'weatherConfidence'=>['totalRuns'=>$totalRuns,'matchedRuns'=>$matchedRuns,'pctMatched'=>$pctMatched,'avgOffsetMin'=>$avgOffsetMin,'maxOffsetMin'=>$maxOffsetMin]]);
 }
