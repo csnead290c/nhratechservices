@@ -159,7 +159,7 @@ try {
     }
 } catch (PDOException $e) {
     error_log("parity_div.php PDOException: " . $e->getMessage());
-    rsa_jsonResponse(['error' => 'Database error'], 500);
+    rsa_jsonResponse(['error' => 'Database error: ' . $e->getMessage()], 500);
 } catch (Exception $e) {
     error_log("parity_div.php Exception: " . $e->getMessage());
     rsa_jsonResponse(['error' => $e->getMessage()], 500);
