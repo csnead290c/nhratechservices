@@ -1202,9 +1202,9 @@ function divFetchOpenMeteo(float $lat, float $lon, string $startUtc, string $end
         'longitude'  => $lon,
         'start_date' => $startDate,
         'end_date'   => $endDate,
-        'hourly'     => 'temperature_2m,relativehumidity_2m,surface_pressure,windspeed_10m,winddirection_10m',
+        'hourly'     => 'temperature_2m,relative_humidity_2m,surface_pressure,wind_speed_10m,wind_direction_10m',
         'temperature_unit' => 'fahrenheit',
-        'windspeed_unit'   => 'mph',
+        'wind_speed_unit'  => 'mph',
         'timezone'         => 'UTC',
     ]);
 
@@ -1217,10 +1217,10 @@ function divFetchOpenMeteo(float $lat, float $lon, string $startUtc, string $end
     $hourly   = $data['hourly'];
     $times    = $hourly['time']              ?? [];
     $temps    = $hourly['temperature_2m']    ?? [];
-    $rh       = $hourly['relativehumidity_2m'] ?? [];
-    $pressure = $hourly['surface_pressure']  ?? [];
-    $wind     = $hourly['windspeed_10m']     ?? [];
-    $windDir  = $hourly['winddirection_10m'] ?? [];
+    $rh       = $hourly['relative_humidity_2m'] ?? [];
+    $pressure = $hourly['surface_pressure']     ?? [];
+    $wind     = $hourly['wind_speed_10m']        ?? [];
+    $windDir  = $hourly['wind_direction_10m']    ?? [];
 
     $samples = [];
     foreach ($times as $i => $timeStr) {
