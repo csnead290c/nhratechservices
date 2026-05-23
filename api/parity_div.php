@@ -391,15 +391,41 @@ function handleUpdateDivEvent(PDO $pdoDiv, array $auth): void {
     $division   = strtoupper(trim($input['division'] ?? $ev['nhra_division']));
     $seasonYear = isset($input['seasonYear']) ? (int)$input['seasonYear'] : (int)$ev['season_year'];
     $eventCode  = array_key_exists('eventCode', $input) ? (trim($input['eventCode']) ?: null) : $ev['event_code'];
+    $trackName  = isset($input['trackName']) ? trim($input['trackName']) : null;
+    $lat        = isset($input['latitude'])  ? (float)$input['latitude']  : null;
+    $lon        = isset($input['longitude']) ? (float)$input['longitude'] : null;
+    $city       = isset($input['city'])  ? (trim($input['city']) ?: null)  : null;
+    $state      = isset($input['state']) ? (trim($input['state']) ?: null) : null;
+    $tz         = isset($input['timezoneIana']) ? trim($input['timezoneIana']) : null;
 
     validateDivision($division);
+
+    // Optionally update track
+    $trackId = (int)$ev['track_id'];
+    if ($trackName) {
+        $stmtFind = $pdoDiv->prepare("SELECT id FROM div_tracks WHERE track_name = ?");
+        $stmtFind->execute([$trackName]);
+        $track = $stmtFind->fetch(PDO::FETCH_ASSOC);
+        if ($track) {
+            $trackId = (int)$track['id'];
+            // Update coordinates on existing track if provided
+            if ($lat !== null && $lon !== null) {
+                $pdoDiv->prepare("UPDATE div_tracks SET latitude = ?, longitude = ?, city = COALESCE(?, city), state = COALESCE(?, state), timezone_iana = COALESCE(?, timezone_iana) WHERE id = ?")
+                       ->execute([$lat, $lon, $city, $state, $tz, $trackId]);
+            }
+        } else {
+            $pdoDiv->prepare("INSERT INTO div_tracks (track_name, timezone_iana, nhra_division, latitude, longitude, city, state) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                   ->execute([$trackName, $tz ?: 'America/New_York', $division, $lat, $lon, $city, $state]);
+            $trackId = (int)$pdoDiv->lastInsertId();
+        }
+    }
 
     $pdoDiv->prepare("
         UPDATE div_events
         SET event_name = ?, start_date_local = ?, end_date_local = ?,
-            nhra_division = ?, season_year = ?, event_code = ?
+            nhra_division = ?, season_year = ?, event_code = ?, track_id = ?
         WHERE id = ?
-    ")->execute([$eventName, $startDate, $endDate, $division, $seasonYear, $eventCode, $id]);
+    ")->execute([$eventName, $startDate, $endDate, $division, $seasonYear, $eventCode, $trackId, $id]);
 
     rsa_jsonResponse(['ok' => true, 'id' => $id]);
 }

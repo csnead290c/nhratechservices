@@ -9130,13 +9130,13 @@ function DivAdminPanel() {
 
 function DivEventsSubPanel() {
   const [events, setEvents] = useState<DivEventRow[]>([]);
-  const [tracks, setTracks] = useState<DivTrackRow[]>([]);
+  const [tracks, setTracks] = useState<TrackWithStats[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [filterDiv, setFilterDiv] = useState('');
   const [editRow, setEditRow] = useState<Partial<DivEventRow> | null>(null);
-  const [selectedTrackId, setSelectedTrackId] = useState<number | 'new' | ''>('');
+  const [selectedTrackId, setSelectedTrackId] = useState<string>('');
   const [newTrackName, setNewTrackName] = useState('');
   const [newTrackLat, setNewTrackLat] = useState('');
   const [newTrackLon, setNewTrackLon] = useState('');
@@ -9152,7 +9152,7 @@ function DivEventsSubPanel() {
     try {
       const [evRes, trRes] = await Promise.all([
         divApi.listDivEvents({ year: filterYear, division: filterDiv || undefined }),
-        divApi.listDivTracks(),
+        parityApi.listTracksWithStats(),
       ]);
       setEvents(evRes.events);
       setTracks(trRes.tracks);
@@ -9168,6 +9168,11 @@ function DivEventsSubPanel() {
     if (!editRow) return;
     setSaving(true); setError('');
     try {
+      // Resolve track info from national tracks list for both add and edit
+      const resolvedTrack = selectedTrackId !== 'new' && selectedTrackId !== ''
+        ? tracks.find(t => t.track_name === selectedTrackId) ?? null
+        : null;
+
       if (editRow.id) {
         await divApi.updateDivEvent({
           id: editRow.id,
@@ -9177,6 +9182,12 @@ function DivEventsSubPanel() {
           division: editRow.nhra_division,
           seasonYear: editRow.season_year ?? undefined,
           eventCode: editRow.event_code ?? undefined,
+          trackName: resolvedTrack?.track_name,
+          latitude: resolvedTrack?.latitude ?? undefined,
+          longitude: resolvedTrack?.longitude ?? undefined,
+          city: resolvedTrack?.city ?? undefined,
+          state: resolvedTrack?.state ?? undefined,
+          timezoneIana: resolvedTrack?.timezone_iana ?? undefined,
         });
       } else {
         if (selectedTrackId === 'new') {
@@ -9197,13 +9208,19 @@ function DivEventsSubPanel() {
           });
         } else {
           if (!selectedTrackId) { setError('Please select a track'); setSaving(false); return; }
+          if (!resolvedTrack) { setError('Selected track not found'); setSaving(false); return; }
           await divApi.createDivEvent({
             eventName: editRow.event_name!,
-            trackId: selectedTrackId as number,
+            trackName: resolvedTrack.track_name,
             startDateLocal: editRow.start_date_local!,
             endDateLocal: editRow.end_date_local!,
             division: editRow.nhra_division!,
             seasonYear: editRow.season_year ?? undefined,
+            timezoneIana: resolvedTrack.timezone_iana ?? undefined,
+            latitude: resolvedTrack.latitude ?? undefined,
+            longitude: resolvedTrack.longitude ?? undefined,
+            city: resolvedTrack.city ?? undefined,
+            state: resolvedTrack.state ?? undefined,
           });
         }
       }
@@ -9240,6 +9257,7 @@ function DivEventsSubPanel() {
           onClick={() => { setEditRow({ nhra_division: 'D1', season_year: filterYear }); setSelectedTrackId(''); setNewTrackName(''); setNewTrackLat(''); setNewTrackLon(''); setNewTrackCity(''); setNewTrackState(''); setNewTrackTz('America/New_York'); }}>
           + Add Event
         </button>
+        {/* Edit row button sets selectedTrackId to current track name for lookup */}
       </div>
       {error && <div style={S.error}>{error}</div>}
       {ingestResult && (
@@ -9258,22 +9276,20 @@ function DivEventsSubPanel() {
             <input style={{ ...S.input, width: 220 }} value={editRow.event_name || ''}
               onChange={e => setEditRow(r => ({ ...r!, event_name: e.target.value }))} />
           </label>
-          {!editRow.id && (
-            <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-              Track
-              <select style={{ ...S.input, width: 240 }} value={selectedTrackId}
-                onChange={e => setSelectedTrackId(e.target.value === 'new' ? 'new' : Number(e.target.value))}>
-                <option value="">— select track —</option>
-                {tracks.map(t => (
-                  <option key={t.id} value={t.id}>
-                    {t.track_name}{t.city ? `, ${t.city}` : ''}{t.state ? ` ${t.state}` : ''}{t.latitude ? ' ✓' : ' ⚠ no coords'}
-                  </option>
-                ))}
-                <option value="new">— new track —</option>
-              </select>
-            </label>
-          )}
-          {!editRow.id && selectedTrackId === 'new' && (
+          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+            Track
+            <select style={{ ...S.input, width: 260 }} value={selectedTrackId}
+              onChange={e => setSelectedTrackId(e.target.value === 'new' ? 'new' : e.target.value)}>
+              <option value="">— select track —</option>
+              {tracks.map(t => (
+                <option key={t.id} value={t.track_name}>
+                  {t.track_name}{t.city ? `, ${t.city}` : ''}{t.state ? ` ${t.state}` : ''}{t.latitude ? '' : ' ⚠'}
+                </option>
+              ))}
+              <option value="new">— new track (not in list) —</option>
+            </select>
+          </label>
+          {selectedTrackId === 'new' && (
             <>
               <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
                 Track Name
@@ -9375,7 +9391,7 @@ function DivEventsSubPanel() {
                   <td style={S.td}>
                     <div style={{ display: 'flex', gap: '0.3rem' }}>
                       <button style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem' }}
-                        onClick={() => setEditRow({ ...ev })}>Edit</button>
+                        onClick={() => { setEditRow({ ...ev }); setSelectedTrackId(ev.track_name); setNewTrackName(''); setNewTrackLat(''); setNewTrackLon(''); setNewTrackCity(''); setNewTrackState(''); setNewTrackTz(ev.timezone_iana || 'America/New_York'); }}>Edit</button>
                       <button
                         style={{ ...S.btn('primary'), fontSize: '0.65rem', padding: '0.1rem 0.4rem', opacity: ingestingId === ev.id ? 0.6 : 1 }}
                         onClick={() => handleIngest(ev)}

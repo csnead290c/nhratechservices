@@ -287,6 +287,12 @@ export const divApi = {
     division?: string;
     seasonYear?: number;
     eventCode?: string;
+    trackName?: string;
+    latitude?: number;
+    longitude?: number;
+    city?: string;
+    state?: string;
+    timezoneIana?: string;
   }): Promise<{ ok: boolean; id: number }> {
     return divRequest<{ ok: boolean; id: number }>('/parity_div.php?action=updateDivEvent', {
       method: 'POST',
