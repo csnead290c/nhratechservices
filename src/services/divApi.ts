@@ -345,4 +345,72 @@ export const divApi = {
       body: JSON.stringify(params),
     });
   },
+
+  // ── Analysis endpoints (divisional equivalents) ───────────────────────
+
+  async anomalyAnalysis(params: {
+    raceLookup: string;
+    category?: string;
+    classIndex?: string;
+    limit?: number;
+  }): Promise<import('./parityApi').AnomalyAnalysisResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divAnomalyAnalysis');
+    qs.set('raceLookup', params.raceLookup);
+    if (params.category) qs.set('category', params.category);
+    else if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return divRequest<import('./parityApi').AnomalyAnalysisResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async qualSheet(params: {
+    eventId: number;
+    classIndex: string;
+  }): Promise<import('./parityApi').QualSheetResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divQualSheet');
+    qs.set('eventId', String(params.eventId));
+    qs.set('classIndex', params.classIndex);
+    return divRequest<import('./parityApi').QualSheetResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async rtAnalysis(params: {
+    eventId: number;
+    category: string;
+  }): Promise<import('./parityApi').RtAnalysisResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divRtAnalysis');
+    qs.set('eventId', String(params.eventId));
+    qs.set('category', params.category);
+    return divRequest<import('./parityApi').RtAnalysisResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async incrementalComparison(params: {
+    eventId: number;
+    category?: string;
+    classIndex?: string;
+    session?: string;
+    mode?: string;
+  }): Promise<import('./parityApi').IncrementalComparisonResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divIncrementalComparison');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    if (params.classIndex) qs.set('classIndex', params.classIndex);
+    if (params.session) qs.set('session', params.session);
+    return divRequest<import('./parityApi').IncrementalComparisonResponse>(`/parity_div.php?${qs.toString()}`);
+  },
+
+  async weatherTimeseries(params: {
+    eventId: number;
+    startUtc?: string;
+    endUtc?: string;
+  }): Promise<import('./parityApi').WeatherTimeseriesResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'divWeatherTimeseries');
+    qs.set('eventId', String(params.eventId));
+    if (params.startUtc) qs.set('startUtc', params.startUtc);
+    if (params.endUtc) qs.set('endUtc', params.endUtc);
+    return divRequest<import('./parityApi').WeatherTimeseriesResponse>(`/parity_div.php?${qs.toString()}`);
+  },
 };

@@ -175,13 +175,14 @@ class ParityErrorBoundary extends React.Component<
 
 type Mode = 'event' | 'longTerm';
 
-export default function ParityReport({ event, events, classIndex, category, onClassChange, onDriverClick }: {
+export default function ParityReport({ event, events, classIndex, category, onClassChange, onDriverClick, division = 'nationals' }: {
   event: EventWithStats | null;
   events: EventWithStats[];
   classIndex: string;
   category?: string;
   onClassChange?: (cls: string) => void;
   onDriverClick?: (driver: string, classIndex?: string) => void;
+  division?: string;
 }) {
   void onClassChange; // future-proofing hook
   void classIndex; // kept for backward compat but category is the primary filter
@@ -193,6 +194,14 @@ export default function ParityReport({ event, events, classIndex, category, onCl
   const [eventCount, setEventCount] = useState<1 | 3 | 5>(1);
   const metric = 'et_1320';
   const [overrideEv, setOverrideEv] = useState<number | null>(null);
+
+  if (division !== 'nationals') {
+    return (
+      <div style={{ padding: '1.5rem', color: 'var(--color-muted)', fontSize: '0.875rem' }}>
+        Parity Report is not yet available for divisional events — engine combo and weather correction data required.
+      </div>
+    );
+  }
 
   return (
     <div style={S.page}>

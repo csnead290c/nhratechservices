@@ -750,14 +750,14 @@ export default function ParityPortal() {
       {/* ── Dashboard Panels ── */}
       {tab === 'eventRuns' && <EventRunsPanel event={selectedEvent} category={category} classIndex={classIndex} onDriverClick={goToDriverHistory} refreshKey={refreshKey} />}
       {tab === 'liveTiming' && <LiveTimingPanel event={selectedEvent} refreshKey={refreshKey} onDriverClick={goToDriverHistory} />}
-      {tab === 'qualSheet' && <QualSheetPanel event={selectedEvent} classIndex={classIndex} onDriverClick={goToDriverHistory} />}
+      {tab === 'qualSheet' && <QualSheetPanel event={selectedEvent} classIndex={classIndex} onDriverClick={goToDriverHistory} division={selectedDivision} />}
       {tab === 'driverHistory' && <DriverDrilldownPanel initialFilter={driverHistoryFilter} />}
-      {tab === 'rtAnalysis' && <RtAnalysisPanel event={selectedEvent} category={category} />}
+      {tab === 'rtAnalysis' && <RtAnalysisPanel event={selectedEvent} category={category} division={selectedDivision} />}
       {tab === 'trends' && <TrendsPanel />}
-      {tab === 'weatherDash' && <WeatherDashPanel event={selectedEvent} category={category} />}
-      {tab === 'parityReport' && <ParityReport event={selectedEvent} events={events} classIndex={classIndex} category={category} onClassChange={(ci: string) => setCategory(CLASS_TO_CATEGORY[ci] || ci)} onDriverClick={goToDriverHistory} />}
-      {tab === 'incrementalComparison' && <IncrementalComparisonPanel event={selectedEvent} category={category} classIndex={classIndex} />}
-      {tab === 'anomalies' && <AnomaliesPanel event={selectedEvent} category={category} refreshKey={refreshKey} />}
+      {tab === 'weatherDash' && <WeatherDashPanel event={selectedEvent} category={category} division={selectedDivision} />}
+      {tab === 'parityReport' && <ParityReport event={selectedEvent} events={events} classIndex={classIndex} category={category} onClassChange={(ci: string) => setCategory(CLASS_TO_CATEGORY[ci] || ci)} onDriverClick={goToDriverHistory} division={selectedDivision} />}
+      {tab === 'incrementalComparison' && <IncrementalComparisonPanel event={selectedEvent} category={category} classIndex={classIndex} division={selectedDivision} />}
+      {tab === 'anomalies' && <AnomaliesPanel event={selectedEvent} category={category} refreshKey={refreshKey} division={selectedDivision} />}
 
       {/* ── Admin Panels ── */}
       {tab === 'adminTracks' && <AdminTracksPanel />}
@@ -4204,7 +4204,7 @@ function ParitySummaryPanel({ event }: { event: EventWithStats | null }) {
 
 // ── Qual Sheet Panel ────────────────────────────────────────────────────
 
-function QualSheetPanel({ event, classIndex, onDriverClick }: { event: EventWithStats | null; classIndex: string; onDriverClick?: (driver: string, classIndex?: string) => void }) {
+function QualSheetPanel({ event, classIndex, onDriverClick, division = 'nationals' }: { event: EventWithStats | null; classIndex: string; onDriverClick?: (driver: string, classIndex?: string) => void; division?: string }) {
   const classFilter = classIndex;
   const [data, setData] = useState<QualSheetResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -4235,11 +4235,14 @@ function QualSheetPanel({ event, classIndex, onDriverClick }: { event: EventWith
     if (!event) return;
     setLoading(true); setError('');
     try {
-      const res = await parityApi.qualSheet({ eventId: event.id, classIndex: classFilter, includeCorrected: true });
+      const isDiv = division !== 'nationals';
+      const res = isDiv
+        ? await divApi.qualSheet({ eventId: event.id, classIndex: classFilter })
+        : await parityApi.qualSheet({ eventId: event.id, classIndex: classFilter, includeCorrected: true });
       setData(res);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [event?.id, classFilter]);
+  }, [event?.id, classFilter, division]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -7436,7 +7439,7 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx];
 }
 
-function RtAnalysisPanel({ event, category }: { event: EventWithStats | null; category: string }) {
+function RtAnalysisPanel({ event, category, division = 'nationals' }: { event: EventWithStats | null; category: string; division?: string }) {
   type RtSubTab = 'event' | 'season';
   const [subTab, setSubTab] = useState<RtSubTab>('event');
   const [rtData, setRtData] = useState<RtAnalysisResponse | null>(null);
@@ -7452,10 +7455,13 @@ function RtAnalysisPanel({ event, category }: { event: EventWithStats | null; ca
     if (!category.trim()) return;
     setLoading(true); setError(''); setRtData(null);
     try {
+      const isDiv = division !== 'nationals';
       const params = subTab === 'event' && event
         ? { eventId: event.id, category: category.trim() }
         : { category: category.trim(), year: seasonYear };
-      const r = await parityApi.rtAnalysis(params);
+      const r = (isDiv && subTab === 'event' && event)
+        ? await divApi.rtAnalysis({ eventId: event.id, category: category.trim() })
+        : await parityApi.rtAnalysis(params);
       setRtData(r);
       // Default: top 5 drivers by median RT
       if (r.driverStats.length) {
@@ -7463,7 +7469,7 @@ function RtAnalysisPanel({ event, category }: { event: EventWithStats | null; ca
       }
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [subTab, event, category, seasonYear]);
+  }, [subTab, event, category, seasonYear, division]);
 
   // Compute RT percentile thresholds for coloring
   const rtThresholds = useMemo(() => {
@@ -7793,7 +7799,7 @@ const wxFmt = {
   grains: (v: number) => v.toFixed(1),                                         // gr/lb — 1 decimal
 };
 
-function WeatherDashPanel({ event, category }: { event: EventWithStats | null; category: string }) {
+function WeatherDashPanel({ event, category, division = 'nationals' }: { event: EventWithStats | null; category: string; division?: string }) {
   const [data, setData] = useState<WeatherTimeseriesResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -7854,18 +7860,23 @@ function WeatherDashPanel({ event, category }: { event: EventWithStats | null; c
     if (!event) { setData(null); return; }
     let cancelled = false;
     setLoading(true); setError('');
-    Promise.all([
-      parityApi.weatherTimeseries({ eventId: event.id }),
-      parityApi.tempestCurrentWeather(),
-    ]).then(([ts, live]) => {
-      if (!cancelled) { setData(ts); setLiveWx(live); }
+    const isDiv = division !== 'nationals';
+    const tsPromise = isDiv
+      ? divApi.weatherTimeseries({ eventId: event.id })
+      : parityApi.weatherTimeseries({ eventId: event.id });
+    const promises: [Promise<WeatherTimeseriesResponse>, Promise<TempestCurrentWeatherResponse | null>] = [
+      tsPromise,
+      isDiv ? Promise.resolve(null) : parityApi.tempestCurrentWeather(),
+    ];
+    Promise.all(promises).then(([ts, live]) => {
+      if (!cancelled) { setData(ts as WeatherTimeseriesResponse); if (live) setLiveWx(live); }
     }).catch((e: any) => {
       if (!cancelled) setError(e.message || 'Failed to load weather data');
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [event]);
+  }, [event, division]);
 
   useEffect(() => {
     if (category.trim() && event) {

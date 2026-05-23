@@ -8,6 +8,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { parityApi, IncrementalComparisonRow, IncrementalComparisonResponse, EventWithStats } from '../services/parityApi';
+import { divApi } from '../services/divApi';
 import { useTheme } from '../shared/ui/theme';
 
 /* ── types ───────────────────────────────────────────────────────────── */
@@ -153,7 +154,8 @@ const IncrementalComparisonPanel: React.FC<{
   event: EventWithStats | null;
   category?: string;
   classIndex?: string;
-}> = ({ event, category = '', classIndex = '' }) => {
+  division?: string;
+}> = ({ event, category = '', classIndex = '', division = 'nationals' }) => {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const [data, setData] = useState<IncrementalComparisonResponse | null>(null);
@@ -176,17 +178,15 @@ const IncrementalComparisonPanel: React.FC<{
     if (!event) return;
     setLoading(true);
     setError('');
-    parityApi.incrementalComparison({
-      eventId: event.id,
-      category: category || undefined,
-      classIndex: classIndex || undefined,
-      session: session || undefined,
-      mode,
-    })
+    const isDiv = division !== 'nationals';
+    const apiCall = isDiv
+      ? divApi.incrementalComparison({ eventId: event.id, category: category || undefined, classIndex: classIndex || undefined, session: session || undefined })
+      : parityApi.incrementalComparison({ eventId: event.id, category: category || undefined, classIndex: classIndex || undefined, session: session || undefined, mode });
+    apiCall
     .then(setData)
     .catch(err => setError(err instanceof Error ? err.message : 'Failed to load data'))
     .finally(() => setLoading(false));
-  }, [event?.id, category, classIndex, session, mode]);
+  }, [event?.id, category, classIndex, session, mode, division]);
 
   const rankings = useMemo(() => {
     if (!data || !data.rows.length) return null;

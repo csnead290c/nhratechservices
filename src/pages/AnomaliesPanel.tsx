@@ -23,6 +23,7 @@ import {
   type AnomalyDetailResponse,
   type AnomalyClassification,
 } from '../services/parityApi';
+import { divApi } from '../services/divApi';
 import { BAND_COLORS } from '../domain/parity/anomalyEngine';
 import { formatET, formatMPH } from '../domain/parity/format';
 
@@ -656,9 +657,10 @@ interface AnomaliesPanelProps {
   event: EventWithStats | null;
   category: string;
   refreshKey?: number;
+  division?: string;
 }
 
-export default function AnomaliesPanel({ event, category, refreshKey }: AnomaliesPanelProps) {
+export default function AnomaliesPanel({ event, category, refreshKey, division = 'nationals' }: AnomaliesPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [data, setData] = useState<AnomalyAnalysisResponse | null>(null);
@@ -679,10 +681,10 @@ export default function AnomaliesPanel({ event, category, refreshKey }: Anomalie
     setDetail(null);
     setSelectedRunId(null);
     try {
-      const res = await parityApi.anomalyAnalysis({
-        raceLookup: event.race_lookup,
-        category: category || undefined,
-      });
+      const isDiv = division !== 'nationals';
+      const res = isDiv
+        ? await divApi.anomalyAnalysis({ raceLookup: event.race_lookup, category: category || undefined })
+        : await parityApi.anomalyAnalysis({ raceLookup: event.race_lookup, category: category || undefined });
       setData(res);
     } catch (e: any) {
       setError(e.message || 'Failed to load anomaly analysis');
