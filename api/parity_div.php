@@ -2224,18 +2224,17 @@ function handleDivRunsWithWeather(PDO $pdoDiv): void {
     $runs = $runsStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Load canonical weather for this event to join
-    $wxMap = [];
     $wxStmt = $pdoDiv->prepare("
-        SELECT timestamp_utc, temp_f, rh_pct, pressure_inhg
+        SELECT bucket_utc AS timestamp_utc, temp_f, rh_pct, pressure_inhg
         FROM div_weather_canonical
         WHERE event_id = ?
-        ORDER BY timestamp_utc
+        ORDER BY bucket_utc
     ");
     $wxStmt->execute([$evRow['id']]);
     $wxRows = $wxStmt->fetchAll(PDO::FETCH_ASSOC);
 
     // Build time index for nearest-sample lookup
-    $wxTimes = array_map(fn($w) => strtotime($w['timestamp_utc']), $wxRows);
+    $wxTimes = array_map(function($w) { return strtotime($w['timestamp_utc']); }, $wxRows);
 
     $joinedCount = 0;
 
