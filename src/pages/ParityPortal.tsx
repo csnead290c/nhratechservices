@@ -9130,11 +9130,19 @@ function DivAdminPanel() {
 
 function DivEventsSubPanel() {
   const [events, setEvents] = useState<DivEventRow[]>([]);
+  const [tracks, setTracks] = useState<DivTrackRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [filterYear, setFilterYear] = useState(new Date().getFullYear());
   const [filterDiv, setFilterDiv] = useState('');
   const [editRow, setEditRow] = useState<Partial<DivEventRow> | null>(null);
+  const [selectedTrackId, setSelectedTrackId] = useState<number | 'new' | ''>('');
+  const [newTrackName, setNewTrackName] = useState('');
+  const [newTrackLat, setNewTrackLat] = useState('');
+  const [newTrackLon, setNewTrackLon] = useState('');
+  const [newTrackCity, setNewTrackCity] = useState('');
+  const [newTrackState, setNewTrackState] = useState('');
+  const [newTrackTz, setNewTrackTz] = useState('America/New_York');
   const [saving, setSaving] = useState(false);
   const [ingestingId, setIngestingId] = useState<number | null>(null);
   const [ingestResult, setIngestResult] = useState<{ id: number; res: DivIngestResult } | null>(null);
@@ -9142,8 +9150,12 @@ function DivEventsSubPanel() {
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
-      const r = await divApi.listDivEvents({ year: filterYear, division: filterDiv || undefined });
-      setEvents(r.events);
+      const [evRes, trRes] = await Promise.all([
+        divApi.listDivEvents({ year: filterYear, division: filterDiv || undefined }),
+        divApi.listDivTracks(),
+      ]);
+      setEvents(evRes.events);
+      setTracks(trRes.tracks);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
   }, [filterYear, filterDiv]);
@@ -9167,15 +9179,33 @@ function DivEventsSubPanel() {
           eventCode: editRow.event_code ?? undefined,
         });
       } else {
-        await divApi.createDivEvent({
-          eventName: editRow.event_name!,
-          trackName: editRow.track_name!,
-          startDateLocal: editRow.start_date_local!,
-          endDateLocal: editRow.end_date_local!,
-          division: editRow.nhra_division!,
-          seasonYear: editRow.season_year ?? undefined,
-          timezoneIana: editRow.timezone_iana ?? undefined,
-        });
+        if (selectedTrackId === 'new') {
+          if (!newTrackName) { setError('Track name is required for a new track'); setSaving(false); return; }
+          if (!newTrackLat || !newTrackLon) { setError('Latitude and longitude are required for a new track'); setSaving(false); return; }
+          await divApi.createDivEvent({
+            eventName: editRow.event_name!,
+            trackName: newTrackName,
+            startDateLocal: editRow.start_date_local!,
+            endDateLocal: editRow.end_date_local!,
+            division: editRow.nhra_division!,
+            seasonYear: editRow.season_year ?? undefined,
+            timezoneIana: newTrackTz,
+            latitude: parseFloat(newTrackLat),
+            longitude: parseFloat(newTrackLon),
+            city: newTrackCity || undefined,
+            state: newTrackState || undefined,
+          });
+        } else {
+          if (!selectedTrackId) { setError('Please select a track'); setSaving(false); return; }
+          await divApi.createDivEvent({
+            eventName: editRow.event_name!,
+            trackId: selectedTrackId as number,
+            startDateLocal: editRow.start_date_local!,
+            endDateLocal: editRow.end_date_local!,
+            division: editRow.nhra_division!,
+            seasonYear: editRow.season_year ?? undefined,
+          });
+        }
       }
       setEditRow(null);
       load();
@@ -9207,7 +9237,7 @@ function DivEventsSubPanel() {
         </select>
         <button style={{ ...S.btn('primary'), fontSize: '0.75rem' }} onClick={load}>Refresh</button>
         <button style={{ ...S.btn('secondary'), fontSize: '0.75rem', marginLeft: 'auto' }}
-          onClick={() => setEditRow({ nhra_division: 'D1', season_year: filterYear })}>
+          onClick={() => { setEditRow({ nhra_division: 'D1', season_year: filterYear }); setSelectedTrackId(''); setNewTrackName(''); setNewTrackLat(''); setNewTrackLon(''); setNewTrackCity(''); setNewTrackState(''); setNewTrackTz('America/New_York'); }}>
           + Add Event
         </button>
       </div>
@@ -9228,12 +9258,55 @@ function DivEventsSubPanel() {
             <input style={{ ...S.input, width: 220 }} value={editRow.event_name || ''}
               onChange={e => setEditRow(r => ({ ...r!, event_name: e.target.value }))} />
           </label>
-          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-            Track Name
-            <input style={{ ...S.input, width: 180 }} value={editRow.track_name || ''}
-              onChange={e => setEditRow(r => ({ ...r!, track_name: e.target.value }))}
-              placeholder="Will create if new" />
-          </label>
+          {!editRow.id && (
+            <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              Track
+              <select style={{ ...S.input, width: 240 }} value={selectedTrackId}
+                onChange={e => setSelectedTrackId(e.target.value === 'new' ? 'new' : Number(e.target.value))}>
+                <option value="">— select track —</option>
+                {tracks.map(t => (
+                  <option key={t.id} value={t.id}>
+                    {t.track_name}{t.city ? `, ${t.city}` : ''}{t.state ? ` ${t.state}` : ''}{t.latitude ? ' ✓' : ' ⚠ no coords'}
+                  </option>
+                ))}
+                <option value="new">— new track —</option>
+              </select>
+            </label>
+          )}
+          {!editRow.id && selectedTrackId === 'new' && (
+            <>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                Track Name
+                <input style={{ ...S.input, width: 200 }} value={newTrackName}
+                  onChange={e => setNewTrackName(e.target.value)} placeholder="e.g. Heartland Motorsports Park" />
+              </label>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                Latitude *
+                <input style={{ ...S.input, width: 110 }} value={newTrackLat}
+                  onChange={e => setNewTrackLat(e.target.value)} placeholder="38.9012" type="number" step="any" />
+              </label>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                Longitude *
+                <input style={{ ...S.input, width: 110 }} value={newTrackLon}
+                  onChange={e => setNewTrackLon(e.target.value)} placeholder="-95.6789" type="number" step="any" />
+              </label>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                City
+                <input style={{ ...S.input, width: 130 }} value={newTrackCity}
+                  onChange={e => setNewTrackCity(e.target.value)} />
+              </label>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                State
+                <input style={{ ...S.input, width: 60 }} value={newTrackState}
+                  onChange={e => setNewTrackState(e.target.value)} placeholder="KS" maxLength={2} />
+              </label>
+              <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+                Timezone
+                <input style={{ ...S.input, width: 200 }} value={newTrackTz}
+                  onChange={e => setNewTrackTz(e.target.value)} placeholder="America/New_York" />
+              </label>
+            </>
+          )}
           <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
             Division
             <select style={{ ...S.input, width: 80 }} value={editRow.nhra_division || 'D1'}
@@ -9255,12 +9328,6 @@ function DivEventsSubPanel() {
             Year
             <input style={{ ...S.input, width: 70 }} type="number" value={editRow.season_year || ''}
               onChange={e => setEditRow(r => ({ ...r!, season_year: Number(e.target.value) }))} />
-          </label>
-          <label style={{ fontSize: '0.75rem', display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
-            Timezone
-            <input style={{ ...S.input, width: 200 }} value={editRow.timezone_iana || 'America/New_York'}
-              onChange={e => setEditRow(r => ({ ...r!, timezone_iana: e.target.value }))}
-              placeholder="America/New_York" />
           </label>
           <div style={{ display: 'flex', gap: '0.4rem' }}>
             <button style={{ ...S.btn('primary'), fontSize: '0.75rem' }} onClick={handleSave} disabled={saving}>

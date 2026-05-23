@@ -260,13 +260,18 @@ export const divApi = {
 
   async createDivEvent(params: {
     eventName: string;
-    trackName: string;
+    trackId?: number;
+    trackName?: string;
     startDateLocal: string;
     endDateLocal: string;
     division: string;
     seasonYear?: number;
     eventCode?: string;
     timezoneIana?: string;
+    latitude?: number;
+    longitude?: number;
+    city?: string;
+    state?: string;
   }): Promise<{ id: number; raceLookup: string; division: string }> {
     return divRequest<{ id: number; raceLookup: string; division: string }>('/parity_div.php?action=createDivEvent', {
       method: 'POST',

@@ -313,30 +313,42 @@ function handleCreateDivEvent(PDO $pdoDiv, array $auth): void {
 
     $eventName  = trim($input['eventName'] ?? '');
     $trackName  = trim($input['trackName'] ?? '');
+    $trackIdIn  = isset($input['trackId']) ? (int)$input['trackId'] : 0;
     $startDate  = trim($input['startDateLocal'] ?? '');
     $endDate    = trim($input['endDateLocal'] ?? '');
     $division   = strtoupper(trim($input['division'] ?? ''));
     $seasonYear = isset($input['seasonYear']) ? (int)$input['seasonYear'] : (int)substr($startDate, 0, 4);
     $eventCode  = trim($input['eventCode'] ?? '') ?: null;
     $tz         = trim($input['timezoneIana'] ?? 'America/New_York');
+    $lat        = isset($input['latitude'])  ? (float)$input['latitude']  : null;
+    $lon        = isset($input['longitude']) ? (float)$input['longitude'] : null;
+    $city       = trim($input['city'] ?? '') ?: null;
+    $state      = trim($input['state'] ?? '') ?: null;
 
     if (!$eventName) rsa_jsonResponse(['error' => 'eventName is required'], 400);
-    if (!$trackName) rsa_jsonResponse(['error' => 'trackName is required'], 400);
     if (!$startDate) rsa_jsonResponse(['error' => 'startDateLocal is required'], 400);
     if (!$endDate)   rsa_jsonResponse(['error' => 'endDateLocal is required'], 400);
     validateDivision($division);
 
-    // Upsert track
-    $stmtFindTrack = $pdoDiv->prepare("SELECT id FROM div_tracks WHERE track_name = ?");
-    $stmtFindTrack->execute([$trackName]);
-    $track = $stmtFindTrack->fetch(PDO::FETCH_ASSOC);
-
-    if (!$track) {
-        $pdoDiv->prepare("INSERT INTO div_tracks (track_name, timezone_iana, nhra_division) VALUES (?, ?, ?)")
-               ->execute([$trackName, $tz, $division]);
-        $trackId = (int)$pdoDiv->lastInsertId();
+    // Resolve track: prefer explicit trackId, then match/create by name
+    if ($trackIdIn > 0) {
+        $chk = $pdoDiv->prepare("SELECT id FROM div_tracks WHERE id = ?");
+        $chk->execute([$trackIdIn]);
+        if (!$chk->fetch()) rsa_jsonResponse(['error' => "Track ID $trackIdIn not found"], 404);
+        $trackId = $trackIdIn;
     } else {
-        $trackId = (int)$track['id'];
+        if (!$trackName) rsa_jsonResponse(['error' => 'trackName or trackId is required'], 400);
+        $stmtFindTrack = $pdoDiv->prepare("SELECT id FROM div_tracks WHERE track_name = ?");
+        $stmtFindTrack->execute([$trackName]);
+        $track = $stmtFindTrack->fetch(PDO::FETCH_ASSOC);
+
+        if (!$track) {
+            $pdoDiv->prepare("INSERT INTO div_tracks (track_name, timezone_iana, nhra_division, latitude, longitude, city, state) VALUES (?, ?, ?, ?, ?, ?, ?)")
+                   ->execute([$trackName, $tz, $division, $lat, $lon, $city, $state]);
+            $trackId = (int)$pdoDiv->lastInsertId();
+        } else {
+            $trackId = (int)$track['id'];
+        }
     }
 
     $raceLookup = str_replace('-', '', $startDate);
