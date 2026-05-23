@@ -159,7 +159,7 @@ try {
     }
 } catch (PDOException $e) {
     error_log("parity_div.php PDOException: " . $e->getMessage());
-    rsa_jsonResponse(['error' => 'Database error: ' . $e->getMessage()], 500);
+    rsa_jsonResponse(['error' => 'Database error'], 500);
 } catch (Exception $e) {
     error_log("parity_div.php Exception: " . $e->getMessage());
     rsa_jsonResponse(['error' => $e->getMessage()], 500);
@@ -2187,7 +2187,7 @@ function handleDivRunsWithWeather(PDO $pdoDiv): void {
     if (!$raceLookup) rsa_jsonResponse(['error' => 'raceLookup or eventId is required'], 400);
 
     // Determine nhra_division from event
-    $evStmt = $pdoDiv->prepare("SELECT id, nhra_division, timezone_iana FROM div_events WHERE race_lookup = ? LIMIT 1");
+    $evStmt = $pdoDiv->prepare("SELECT id, nhra_division FROM div_events WHERE race_lookup = ? LIMIT 1");
     $evStmt->execute([$raceLookup]);
     $evRow = $evStmt->fetch(PDO::FETCH_ASSOC);
     if (!$evRow) rsa_jsonResponse(['error' => "No event found for raceLookup $raceLookup"], 404);
