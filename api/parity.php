@@ -9074,6 +9074,38 @@ function handleParityAllRuns(PDO $pdo): void {
 }
 
 // ============================================================================
+// Sportsman Class Detection
+// ============================================================================
+
+/**
+ * Detect sportsman class type and return configuration
+ */
+function getSportsmanClassConfig(string $classIndex): array {
+    $classIndex = strtoupper(trim($classIndex));
+    
+    // Index-based classes (qualify by how far under index)
+    $indexBased = ['STOCK', 'SUPER STOCK', 'COMP', 'SS', 'COMP ELIM'];
+    if (in_array($classIndex, $indexBased) || strpos($classIndex, 'STOCK') !== false || strpos($classIndex, 'COMP') !== false) {
+        return ['type' => 'index_based', 'showUnderIndex' => true];
+    }
+    
+    // Top Sportsman/Top Dragster (filter out runs quicker than 6.100)
+    $topClasses = ['TOP SPORTSMAN', 'TOP DRAGSTER', 'TS', 'TD'];
+    if (in_array($classIndex, $topClasses) || strpos($classIndex, 'TOP SPORT') !== false || strpos($classIndex, 'TOP DRAG') !== false) {
+        return ['type' => 'top_filter', 'etLimit' => 6.100];
+    }
+    
+    // .90 index classes (T1/T2/T3 rounds, rank by closest to index without going quicker)
+    $index90Classes = ['SUPER STREET', 'SUPER GAS', 'SUPER COMP', 'SG', 'SC', 'SS'];
+    if (in_array($classIndex, $index90Classes) || strpos($classIndex, 'SUPER STREET') !== false || strpos($classIndex, 'SUPER GAS') !== false || strpos($classIndex, 'SUPER COMP') !== false) {
+        return ['type' => 'index_90', 'roundPrefix' => 'T'];
+    }
+    
+    // Default: standard qualifying
+    return ['type' => 'standard'];
+}
+
+// ============================================================================
 // GET ?action=parityQualOrder  (lean qualifying order endpoint)
 // ============================================================================
 
@@ -9088,32 +9120,82 @@ function handleParityQualOrder(PDO $pdo): void {
         FROM parity_driver_body_styles dbs JOIN parity_body_styles bs ON bs.id = dbs.body_style_id
     ")->fetchAll(PDO::FETCH_ASSOC);
 
-    // Build qual order from allRunsFlat (Q rounds only, best ET per driver)
+    // Get sportsman class configuration
+    $sportsmanConfig = getSportsmanClassConfig($p['classIndex']);
+
+    // Build qual order from allRunsFlat with sportsman filters
     $qualRunsForOrder = [];
     foreach ($d['allRunsFlat'] as $r) {
         if ($r['excluded']) continue;
+        
+        // Apply sportsman class filters
+        if ($sportsmanConfig['type'] === 'top_filter' && isset($sportsmanConfig['etLimit'])) {
+            // Filter out runs quicker than 6.100 for Top Sportsman/Top Dragster
+            if ($r['et'] !== null && (float)$r['et'] < $sportsmanConfig['etLimit']) {
+                continue;
+            }
+        }
+        
+        if ($sportsmanConfig['type'] === 'index_90' && isset($sportsmanConfig['roundPrefix'])) {
+            // Only include T1/T2/T3 rounds for .90 index classes
+            if (!preg_match('/^T[1-9]/', $r['round'])) {
+                continue;
+            }
+        }
+        
+        // Standard Q-round filter for other classes
         if ($r['round'] && strpos($r['round'], 'Q') === 0) {
+            $qualRunsForOrder[] = $r;
+        } elseif ($sportsmanConfig['type'] === 'index_90' && preg_match('/^T[1-9]/', $r['round'])) {
+            // Include T rounds for .90 index classes
             $qualRunsForOrder[] = $r;
         }
     }
     $driverBest = [];
     foreach ($qualRunsForOrder as $r) {
         $dn = $r['driver'];
-        if (!isset($driverBest[$dn]) || $r['et'] < $driverBest[$dn]['et']
-            || ($r['et'] === $driverBest[$dn]['et'] && ($r['mph'] ?? 0) > ($driverBest[$dn]['mph'] ?? 0))
-            || ($r['et'] === $driverBest[$dn]['et'] && ($r['mph'] ?? 0) === ($driverBest[$dn]['mph'] ?? 0) && $r['timestamp'] < $driverBest[$dn]['timestamp'])) {
+        
+        // For index-based classes, calculate under-index value
+        if ($sportsmanConfig['type'] === 'index_based' && $r['et'] !== null) {
+            // TODO: Get actual index value and calculate underIndex
+            $r['underIndex'] = null; // Placeholder for now
+        }
+        
+        if (!isset($driverBest[$dn])) {
             $driverBest[$dn] = $r;
+        } else {
+            $prev = $driverBest[$dn];
+            if ($sportsmanConfig['type'] === 'index_based' && isset($r['underIndex']) && isset($prev['underIndex'])) {
+                // For index-based classes, rank by who goes furthest under index
+                $isBetter = $r['underIndex'] > $prev['underIndex'];
+            } else {
+                // Standard qualifying logic
+                $isBetter = $r['et'] < $prev['et']
+                    || ($r['et'] === $prev['et'] && ($r['mph'] ?? 0) > ($prev['mph'] ?? 0))
+                    || ($r['et'] === $prev['et'] && ($r['mph'] ?? 0) === ($prev['mph'] ?? 0) && $r['timestamp'] < $prev['timestamp']);
+            }
+            if ($isBetter) {
+                $driverBest[$dn] = $r;
+            }
         }
     }
     $qualOrder = array_values($driverBest);
-    usort($qualOrder, function($a, $b) {
-        if ($a['et'] === null && $b['et'] === null) return 0;
-        if ($a['et'] === null) return 1;
-        if ($b['et'] === null) return -1;
-        if ($a['et'] !== $b['et']) return $a['et'] <=> $b['et'];
-        $mphA = $a['mph'] ?? 0; $mphB = $b['mph'] ?? 0;
-        if ($mphA !== $mphB) return $mphB <=> $mphA;
-        return ($a['timestamp'] ?? '') <=> ($b['timestamp'] ?? '');
+    usort($qualOrder, function($a, $b) use ($sportsmanConfig) {
+        if ($sportsmanConfig['type'] === 'index_based' && isset($a['underIndex']) && isset($b['underIndex'])) {
+            // For index-based classes, sort by who goes furthest under index
+            if ($a['underIndex'] === null && $b['underIndex'] === null) return 0;
+            if ($a['underIndex'] === null) return 1; if ($b['underIndex'] === null) return -1;
+            return $b['underIndex'] <=> $a['underIndex']; // Higher underIndex = better
+        } else {
+            // Standard qualifying logic
+            if ($a['et'] === null && $b['et'] === null) return 0;
+            if ($a['et'] === null) return 1;
+            if ($b['et'] === null) return -1;
+            if ($a['et'] !== $b['et']) return $a['et'] <=> $b['et'];
+            $mphA = $a['mph'] ?? 0; $mphB = $b['mph'] ?? 0;
+            if ($mphA !== $mphB) return $mphB <=> $mphA;
+            return ($a['timestamp'] ?? '') <=> ($b['timestamp'] ?? '');
+        }
     });
     // Always resolve body style (needed for secondary-group display in all categories)
     foreach ($qualOrder as $idx => &$qr) {
@@ -9121,6 +9203,13 @@ function handleParityQualOrder(PDO $pdo): void {
         $bsResolved = resolveBodyStyleForRun($qr['driver'], $qr['classIndex'] ?? '', $qr['timestamp'] ?? '', $driverBodyStyles);
         $qr['bodyStyle']   = $bsResolved ? $bsResolved['name'] : null;
         $qr['bodyStyleId'] = $bsResolved ? (int)$bsResolved['id'] : null;
+        
+        // Add sportsman-specific display info
+        if ($sportsmanConfig['type'] === 'index_based' && isset($qr['underIndex'])) {
+            $qr['displayValue'] = $qr['et'] . ' (' . ($qr['underIndex'] > 0 ? '+' : '') . $qr['underIndex'] . ')';
+        } else {
+            $qr['displayValue'] = $qr['et'];
+        }
     }
     unset($qr);
 
@@ -9129,6 +9218,7 @@ function handleParityQualOrder(PDO $pdo): void {
         'mode' => $p['mode'], 'sessionScope' => $p['sessionScope'],
         'isLowerBetter' => $p['isLowerBetter'],
         'qualOrder' => $qualOrder,
+        'sportsmanConfig' => $sportsmanConfig,
     ]);
 }
 

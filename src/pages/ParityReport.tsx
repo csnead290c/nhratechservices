@@ -31,13 +31,13 @@ import {
 const PARITY_METRICS = [
   { value: 'et_1320', label: 'ET 1320 ft' },
   { value: 'mph_1320', label: 'MPH 1320 ft' },
-  { value: 'rt', label: 'Reaction Time' },
   { value: 't60', label: '60 ft' },
   { value: 't330', label: '330 ft' },
   { value: 't660', label: '660 ft' },
   { value: 'mph_660', label: 'MPH 660 ft' },
   { value: 't1000', label: '1000 ft' },
   { value: 'mph_1000', label: 'MPH 1000 ft' },
+  { value: 'split_custom', label: 'Split Time' },
 ];
 
 const COMBO_PALETTE = [
@@ -198,7 +198,7 @@ export default function ParityReport({ event, events, classIndex, category, onCl
   const [splitTo, setSplitTo] = useState('');
   const [overrideEv, setOverrideEv] = useState<number | null>(null);
   const splitMarkers = ['t60', 't330', 't660', 't1000', 't1320'];
-  const isIncrementalET = ['t60', 't330', 't660', 't1000', 'et_1320'].includes(metric);
+  const isSplitMetric = metric.startsWith('split_');
 
   return (
     <div style={S.page}>
@@ -211,8 +211,8 @@ export default function ParityReport({ event, events, classIndex, category, onCl
           {mode === 'event' && (
             <label style={{ fontSize: '0.78rem' }}>Events:<select value={eventCount} onChange={e => setEventCount(Number(e.target.value) as 1 | 3 | 5)} style={{ ...S.inp, width: 70, marginLeft: 4 }}><option value="1">1</option><option value="3">3</option><option value="5">5</option></select></label>
           )}
-          <label style={{ fontSize: '0.78rem' }}>Metric:<select value={metric} onChange={e => { setMetric(e.target.value); setSplitFrom(''); setSplitTo(''); }} style={{ ...S.inp, width: 110, marginLeft: 4 }}>{PARITY_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label>
-          {isIncrementalET && (
+          <label style={{ fontSize: '0.78rem' }}>Metric:<select value={metric} onChange={e => { const newMetric = e.target.value; setMetric(newMetric); if (!newMetric.startsWith('split_')) { setSplitFrom(''); setSplitTo(''); } }} style={{ ...S.inp, width: 110, marginLeft: 4 }}>{PARITY_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}</select></label>
+          {isSplitMetric && (
             <label style={{ fontSize: '0.78rem' }}>Split:
               <select value={splitFrom} onChange={e => { setSplitFrom(e.target.value); setSplitTo(''); }} style={{ ...S.inp, width: 65, marginLeft: 4 }}>
                 <option value="">From</option>
@@ -242,6 +242,21 @@ export default function ParityReport({ event, events, classIndex, category, onCl
       </ParityErrorBoundary>
     </div>
   );
+}
+
+// Helper to get metric value from a run
+function getMetricValue(run: any, metric: string, splitFrom?: string, splitTo?: string): number | null {
+  if (metric.startsWith('split_') && splitFrom && splitTo) {
+    const fromVal = run[splitFrom];
+    const toVal = run[splitTo];
+    if (fromVal != null && toVal != null) {
+      return Math.max(0, (parseFloat(toVal) - parseFloat(fromVal)));
+    }
+    return null;
+  }
+  
+  const val = run[metric];
+  return val != null ? parseFloat(val) : null;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -554,7 +569,7 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
       <div data-testid="parity-header" style={{ marginBottom: '0.5rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            {evYear} {evCode} NHRA {displayLabel} {modeLabel} Event Parity
+            {evYear} {evCode} NHRA {modeLabel} Event Parity
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <select
@@ -594,7 +609,10 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
         <table style={SS.tbl}>
           <thead><tr>
             <th style={SS.th}>{groupLabel}</th><th style={SS.th}>Driver</th>
-            <th style={{ ...SS.th, textAlign: 'right' }}>ET</th><th style={{ ...SS.th, textAlign: 'right' }}>Speed</th>
+            <th style={{ ...SS.th, textAlign: 'right' }}>
+              {metric.startsWith('split_') && splitFrom && splitTo ? `Split ${splitFrom}-${splitTo}` : 
+               PARITY_METRICS.find(m => m.value === metric)?.label || metric}
+            </th>
             <th style={SS.th}>Round</th>
             {eventCount > 1 && <th style={SS.th}>Event</th>}
           </tr></thead>
@@ -605,6 +623,7 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
               const eventLabel = runEvent 
                 ? eventShortCode({ event_name: runEvent.event_name, event_code: (runEvent as any).event_code, start_date_local: runEvent.start_date_local })
                 : '';
+              const metricValue = getMetricValue(r, metric, splitFrom, splitTo);
               return (
                 <tr key={`${c.engineCombo}-${ri}`} style={{ background: ri === 0 ? comboColor(c.engineCombo) + '18' : undefined }}>
                   {ri === 0
@@ -613,8 +632,9 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
                       </td>
                     : null}
                   <td style={SS.td}>{onDriverClick ? <a href="#" style={{ color: 'inherit', textDecoration: 'underline dotted', textUnderlineOffset: '2px' }} onClick={e => { e.preventDefault(); onDriverClick(r.driver); }}>{r.driver}</a> : r.driver}</td>
-                  <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace' }}>{formatET(r.et)}</td>
-                  <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace' }}>{formatMPH(r.mph)}</td>
+                  <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace' }}>
+                    {metricValue != null ? formatMetric(metricValue, metric) : '—'}
+                  </td>
                   <td style={{ ...SS.td, fontSize: '0.65rem', color: '#888' }}>{r.round || ''}</td>
                   {eventCount > 1 && <td style={{ ...SS.td, fontSize: '0.65rem', color: '#888' }}>{eventLabel}</td>}
                 </tr>
