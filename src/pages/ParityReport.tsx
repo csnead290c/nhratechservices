@@ -1133,6 +1133,8 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [data, setData] = useState<RangeParityMatrixResponse | null>(null);
+  const [allMergedEvents, setAllMergedEvents] = useState<RangeParityMatrixResponse['events']>([]);
+  const [allMergedMatrix, setAllMergedMatrix] = useState<RangeParityMatrixResponse['matrix']>({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [exporting, setExporting] = useState(false);
@@ -1174,13 +1176,12 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
             }
           }
         }
-        // Sort by date, take last N
+        // Sort by date, store full merged list — prevN slicing happens in render
         allEvents.sort((a, b) => a.start_date_local.localeCompare(b.start_date_local));
-        const sliced = allEvents.slice(-prevN);
-        const filteredMatrix: typeof allMatrix = {};
-        for (const ev of sliced) { filteredMatrix[ev.eventId] = allMatrix[ev.eventId]; }
         const last = results[0];
-        setData({ ...last, events: sliced, matrix: filteredMatrix, combos: [...allCombos], isLowerBetter: isLB });
+        setAllMergedEvents(allEvents);
+        setAllMergedMatrix(allMatrix);
+        setData({ ...last, events: allEvents, matrix: allMatrix, combos: [...allCombos], isLowerBetter: isLB });
       }).catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     } else {
@@ -1195,7 +1196,16 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
         .catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     }
-  }, [category, metric, corrMode, sessionScope, groupBy, rangeMode, year, startDate, endDate, prevN, unified, rangeFn, splitFrom, splitTo]);
+  }, [category, metric, corrMode, sessionScope, groupBy, rangeMode, year, startDate, endDate, unified, rangeFn, splitFrom, splitTo]);
+
+  // When prevN changes, re-slice from cached merged data (no re-fetch needed)
+  useEffect(() => {
+    if (rangeMode !== 'previousN' || allMergedEvents.length === 0 || !data) return;
+    const sliced = allMergedEvents.slice(-prevN);
+    const filteredMatrix: RangeParityMatrixResponse['matrix'] = {};
+    for (const ev of sliced) { filteredMatrix[ev.eventId] = allMergedMatrix[ev.eventId]; }
+    setData(prev => prev ? { ...prev, events: sliced, matrix: filteredMatrix } : prev);
+  }, [prevN, rangeMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
