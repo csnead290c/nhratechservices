@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   parityApi,
   type ParitySummaryResponse,
@@ -1139,14 +1139,16 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [data, setData] = useState<RangeParityMatrixResponse | null>(null);
-  const [allMergedEvents, setAllMergedEvents] = useState<RangeParityMatrixResponse['events']>([]);
-  const [allMergedMatrix, setAllMergedMatrix] = useState<RangeParityMatrixResponse['matrix']>({});
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [exporting, setExporting] = useState(false);
   const [unified, setUnified] = useState(true);
 
-  const rangeFn = unified ? parityApi.rangeParityMatrixUnified.bind(parityApi) : parityApi.rangeParityMatrix.bind(parityApi);
+  const rangeFn = useMemo(
+    () => unified ? parityApi.rangeParityMatrixUnified.bind(parityApi) : parityApi.rangeParityMatrix.bind(parityApi),
+    [unified]
+  );
+  const mergedRef = useRef<{ events: RangeParityMatrixResponse['events']; matrix: RangeParityMatrixResponse['matrix'] }>({ events: [], matrix: {} });
 
   const load = useCallback(() => {
     setLoading(true); setErr('');
@@ -1182,12 +1184,14 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
             }
           }
         }
-        // Sort by date, store full merged list — prevN slicing happens in render
+        // Sort by date, store full merged list in ref — prevN slicing happens without re-fetch
         allEvents.sort((a, b) => a.start_date_local.localeCompare(b.start_date_local));
         const last = results[0];
-        setAllMergedEvents(allEvents);
-        setAllMergedMatrix(allMatrix);
-        setData({ ...last, events: allEvents, matrix: allMatrix, combos: [...allCombos], isLowerBetter: isLB });
+        mergedRef.current = { events: allEvents, matrix: allMatrix };
+        const sliced = allEvents.slice(-prevN);
+        const slicedMatrix: typeof allMatrix = {};
+        for (const ev of sliced) slicedMatrix[ev.eventId] = allMatrix[ev.eventId];
+        setData({ ...last, events: sliced, matrix: slicedMatrix, combos: [...allCombos], isLowerBetter: isLB });
       }).catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     } else {
@@ -1204,14 +1208,17 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
     }
   }, [category, metric, corrMode, sessionScope, groupBy, rangeMode, year, startDate, endDate, unified, rangeFn, splitFrom, splitTo]);
 
-  // When prevN changes, re-slice from cached merged data (no re-fetch needed)
+  // When prevN changes, re-slice from cached merged data via ref (no re-fetch, no cascading deps)
+  const prevNRef = useRef(prevN);
   useEffect(() => {
-    if (rangeMode !== 'previousN' || allMergedEvents.length === 0 || !data) return;
-    const sliced = allMergedEvents.slice(-prevN);
+    if (prevN === prevNRef.current) return;
+    prevNRef.current = prevN;
+    if (rangeMode !== 'previousN' || mergedRef.current.events.length === 0) return;
+    const sliced = mergedRef.current.events.slice(-prevN);
     const filteredMatrix: RangeParityMatrixResponse['matrix'] = {};
-    for (const ev of sliced) { filteredMatrix[ev.eventId] = allMergedMatrix[ev.eventId]; }
+    for (const ev of sliced) filteredMatrix[ev.eventId] = mergedRef.current.matrix[ev.eventId];
     setData(prev => prev ? { ...prev, events: sliced, matrix: filteredMatrix } : prev);
-  }, [prevN, rangeMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [prevN, rangeMode]);
 
   useEffect(() => { load(); }, [load]);
 
