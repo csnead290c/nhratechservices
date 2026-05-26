@@ -244,19 +244,13 @@ export default function ParityReport({ event, events, classIndex, category, onCl
   );
 }
 
-// Helper to get metric value from a run
-function getMetricValue(run: any, metric: string, splitFrom?: string, splitTo?: string): number | null {
-  if (metric.startsWith('split_') && splitFrom && splitTo) {
-    const fromVal = run[splitFrom];
-    const toVal = run[splitTo];
-    if (fromVal != null && toVal != null) {
-      return Math.max(0, (parseFloat(toVal) - parseFloat(fromVal)));
-    }
-    return null;
-  }
-  
-  const val = run[metric];
-  return val != null ? parseFloat(val) : null;
+// Helper to get metric value from a run for the top table.
+// ParityComboRun objects carry 'value' = the selected metric value, 'et' = 1320 ET, 'mph' = 1320 MPH.
+// For standard metrics we use the pre-computed 'value' field; for split metrics we fall back to 'value' too.
+function getMetricValue(run: any, _metric: string, _splitFrom?: string, _splitTo?: string): number | null {
+  // The API always returns the chosen metric as 'value' on each run object.
+  const v = run['value'] ?? run['rawValue'];
+  return v != null ? parseFloat(v) : null;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1282,7 +1276,8 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
         )}
       </div>
 
-      {loading && <p style={S.hint}>Loading Long-Term Report...</p>}
+      {loading && !data && <p style={S.hint}>Loading Long-Term Report...</p>}
+      {loading && data && <p style={{ ...S.hint, opacity: 0.5 }}>Refreshing...</p>}
       {err && <div style={{ ...S.card, color: '#ef4444' }}>{typeof err === 'string' ? err : JSON.stringify(err)}</div>}
       {data && rangeMode === 'previousN' && data.events.length < prevN && (
         <p style={{ ...S.hint, fontStyle: 'italic' }}>Showing {data.events.length} of {prevN} requested — no older data found.</p>
