@@ -199,6 +199,10 @@ export default function ParityReport({ event, events, classIndex, category, onCl
   const [overrideEv, setOverrideEv] = useState<number | null>(null);
   const splitMarkers = ['t60', 't330', 't660', 't1000', 't1320'];
   const isSplitMetric = metric.startsWith('split_');
+  // Resolve the metric sent to the API: split_custom is a UI-only token; the real metric is et_1320
+  // (the backend derives split value from splitFrom/splitTo params when both are present)
+  const effectiveMetric = (isSplitMetric && splitFrom && splitTo) ? 'et_1320' : metric;
+  const splitReady = !isSplitMetric || (splitFrom !== '' && splitTo !== '');
 
   return (
     <div style={S.page}>
@@ -235,9 +239,11 @@ export default function ParityReport({ event, events, classIndex, category, onCl
         </div>
       )}
       <ParityErrorBoundary>
-        {mode === 'event'
-          ? <EventReport event={overrideEv ? { ...(event as any), id: overrideEv } : event} events={events} eventCount={eventCount} category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} division={division} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
-          : <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={metric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+        {!splitReady
+          ? <p style={S.hint}>Select both a From and To split marker to view split data.</p>
+          : mode === 'event'
+            ? <EventReport event={overrideEv ? { ...(event as any), id: overrideEv } : event} events={events} eventCount={eventCount} category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} division={division} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+            : <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
         }
       </ParityErrorBoundary>
     </div>
