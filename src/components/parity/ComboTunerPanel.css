@@ -1,0 +1,266 @@
+/**
+ * Combo Tuner Panel Styles
+ */
+
+.combo-tuner-panel {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  background: var(--color-surface, #1e1e2e);
+  border: 1px solid var(--color-border, #333);
+  border-radius: 6px;
+}
+
+.combo-tuner-panel h4 {
+  margin: 0 0 0.75rem 0;
+  font-size: 0.95rem;
+  color: var(--color-text, #e0e0e0);
+  border-bottom: 1px solid var(--color-border, #333);
+  padding-bottom: 0.5rem;
+}
+
+/* Controls Section */
+.combo-tuner-controls {
+  margin-bottom: 1.5rem;
+}
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+  align-items: flex-end;
+}
+
+.control-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.control-field label {
+  font-size: 0.75rem;
+  color: var(--color-muted, #888);
+  font-weight: 500;
+}
+
+.control-field select,
+.control-field input[type="number"] {
+  padding: 0.4rem 0.5rem;
+  font-size: 0.8rem;
+  background: var(--color-bg, #262636);
+  border: 1px solid var(--color-border, #333);
+  border-radius: 4px;
+  color: var(--color-text, #e0e0e0);
+  min-width: 140px;
+}
+
+.control-field select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.control-field.locks {
+  flex-direction: row;
+  align-items: center;
+  gap: 1rem;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--color-text, #e0e0e0);
+  cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+}
+
+.control-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border, #333);
+}
+
+.btn-analyze,
+.btn-recommend {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-analyze {
+  background: #3b82f6;
+  color: white;
+}
+
+.btn-recommend {
+  background: #10b981;
+  color: white;
+}
+
+.btn-analyze:hover:not(:disabled),
+.btn-recommend:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-analyze:disabled,
+.btn-recommend:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Error Message */
+.combo-tuner-error {
+  padding: 0.75rem;
+  margin-bottom: 1rem;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  border-radius: 4px;
+  color: #ef4444;
+  font-size: 0.85rem;
+}
+
+/* Summary Section */
+.combo-tuner-summary {
+  margin-bottom: 1.5rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.summary-item {
+  display: flex;
+  flex-direction: column;
+  padding: 0.6rem;
+  background: var(--color-bg, #262636);
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #333);
+}
+
+.summary-item.improved {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.05);
+}
+
+.summary-label {
+  font-size: 0.7rem;
+  color: var(--color-muted, #888);
+  margin-bottom: 0.25rem;
+}
+
+.summary-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--color-text, #e0e0e0);
+  font-family: monospace;
+}
+
+.summary-item.improved .summary-value {
+  color: #10b981;
+}
+
+.proposed-stats {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px dashed var(--color-border, #333);
+}
+
+/* Recommendations Table */
+.combo-tuner-recommendations {
+  margin-bottom: 1.5rem;
+}
+
+.recommendation-table-wrapper {
+  overflow-x: auto;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.recommendation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.recommendation-table th,
+.recommendation-table td {
+  padding: 0.5rem 0.75rem;
+  text-align: right;
+  border-bottom: 1px solid var(--color-border, #333);
+}
+
+.recommendation-table th {
+  font-weight: 600;
+  color: var(--color-muted, #888);
+  background: var(--color-bg, #262636);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.recommendation-table th.sub-header {
+  top: 2rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+}
+
+.recommendation-table td {
+  font-family: monospace;
+  color: var(--color-text, #e0e0e0);
+}
+
+.recommendation-table .combo-name {
+  text-align: left;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.recommendation-table .current {
+  color: var(--color-muted, #888);
+}
+
+.recommendation-table .proposed {
+  color: #3b82f6;
+  font-weight: 500;
+}
+
+.recommendation-table .delta {
+  color: #f59e0b;
+  font-weight: 500;
+}
+
+.recommendation-table .improved {
+  color: #10b981;
+  font-weight: 600;
+}
+
+/* Chart Section */
+.combo-tuner-chart {
+  margin-bottom: 1.5rem;
+  padding: 1rem;
+  background: var(--color-bg, #262636);
+  border-radius: 4px;
+  border: 1px solid var(--color-border, #333);
+}
+
+/* Notice */
+.combo-tuner-notice {
+  padding: 0.75rem;
+  background: rgba(59, 130, 246, 0.1);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  border-radius: 4px;
+  color: #60a5fa;
+  font-size: 0.8rem;
+}

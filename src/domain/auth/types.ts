@@ -132,6 +132,9 @@ export const ALL_FEATURES = [
   'system_settings',
   'view_analytics',
   'beta_features',
+
+  // Parity features
+  'combo_tuner',
 ] as const;
 
 export type FeatureFlag = typeof ALL_FEATURES[number];

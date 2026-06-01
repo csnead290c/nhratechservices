@@ -692,6 +692,7 @@ export interface DriverEntry {
   best_et: number | null;
   best_mph: number | null;
   event_count: number;
+  top_category: string | null;
 }
 
 export interface DriversResponse {
@@ -721,7 +722,11 @@ export interface DriverRun {
   dq_flag: boolean;
   place: string | null;
   event_name: string | null;
+  event_code: string | null;
   track_name: string | null;
+  city: string | null;
+  state: string | null;
+  track_timezone: string | null;
   inc_0_60: number | null;
   inc_60_330: number | null;
   inc_330_660: number | null;
@@ -751,6 +756,18 @@ export interface RunsByDriverResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+export interface DriverCategoryEntry {
+  category: string;
+  total_run_count: number;
+  recent_run_count: number;
+  last_race_lookup: string | null;
+}
+
+export interface DriverCategoriesResponse {
+  driverName: string;
+  categories: DriverCategoryEntry[];
 }
 
 // ── Class Alias Types ───────────────────────────────────────────────────
@@ -1606,6 +1623,7 @@ export interface ParityComboRun {
 export interface ParityComboEntry {
   engineCombo: string;
   engineComboId: number | null;
+  isFallback?: boolean;
   bestValue: number | null;
   avgTopN: number | null;
   totalAvg: number | null;
@@ -1687,7 +1705,7 @@ export interface ParitySummaryResponse {
   mode: 'raw' | 'corrected';
   topN: number;
   sessionScope: 'qual' | 'elim' | 'both';
-  groupBy: 'engineCombo' | 'bodyStyle';
+  groupBy: 'engineCombo' | 'bodyStyle' | 'classIndex';
   includeFlagged: boolean;
   includeUnknown: boolean;
   isLowerBetter: boolean;
@@ -1826,7 +1844,7 @@ export interface RangeParityMatrixResponse {
   mode: 'raw' | 'corrected';
   topN: number;
   sessionScope: 'qual' | 'elim' | 'both';
-  groupBy: 'engineCombo' | 'bodyStyle';
+  groupBy: 'engineCombo' | 'bodyStyle' | 'classIndex';
   isLowerBetter: boolean;
   startDate: string;
   endDate: string;
@@ -2490,8 +2508,14 @@ export const parityApi = {
     return parityRequest<DriversResponse>(`/parity.php?${qs.toString()}`);
   },
 
+  async driverCategories(driverName: string): Promise<DriverCategoriesResponse> {
+    const qs = new URLSearchParams({ action: 'driverCategories', driverName });
+    return parityRequest<DriverCategoriesResponse>(`/parity.php?${qs.toString()}`);
+  },
+
   async runsByDriver(params: {
     driverName: string;
+    category?: string;
     classIndex?: string;
     startDate?: string;
     endDate?: string;
@@ -2506,6 +2530,7 @@ export const parityApi = {
     const qs = new URLSearchParams();
     qs.set('action', 'runsByDriver');
     qs.set('driverName', params.driverName);
+    if (params.category) qs.set('category', params.category);
     if (params.classIndex) qs.set('classIndex', params.classIndex);
     if (params.startDate) qs.set('startDate', params.startDate);
     if (params.endDate) qs.set('endDate', params.endDate);
@@ -2804,7 +2829,7 @@ export const parityApi = {
     mode?: 'raw' | 'corrected';
     topN?: number;
     sessionScope?: 'qual' | 'elim' | 'both';
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     includeFlagged?: boolean;
     includeUnknown?: boolean;
     splitFrom?: string;
@@ -2839,7 +2864,7 @@ export const parityApi = {
     mode?: 'raw' | 'corrected';
     topN?: number;
     sessionScope?: 'qual' | 'elim' | 'both';
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     includeUnknown?: boolean;
   }): Promise<ParityDeltasResponse> {
     const qs = new URLSearchParams();
@@ -2888,7 +2913,7 @@ export const parityApi = {
     metric?: string;
     mode?: 'raw' | 'corrected';
     sessionScope?: 'qual' | 'elim' | 'both';
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     splitFrom?: string;
     splitTo?: string;
   }): Promise<ParityQualOrderResponse> {
@@ -2913,7 +2938,7 @@ export const parityApi = {
     category?: string;
     sessionScope?: 'qual' | 'elim' | 'both';
     mode?: 'raw' | 'corrected';
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     includeFlagged?: boolean;
     includeUnknown?: boolean;
   }): Promise<ParityIncrementalsResponse> {
@@ -2956,7 +2981,7 @@ export const parityApi = {
     classIndex?: string;
     category?: string;
     metric?: string;
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     mode?: 'raw' | 'corrected';
     topN?: number;
     sessionScope?: 'qual' | 'elim' | 'both';
@@ -2987,7 +3012,7 @@ export const parityApi = {
     classIndex?: string;
     category?: string;
     metric?: string;
-    groupBy?: 'engineCombo' | 'bodyStyle';
+    groupBy?: 'engineCombo' | 'bodyStyle' | 'classIndex';
     mode?: 'raw' | 'corrected';
     topN?: number;
     sessionScope?: 'qual' | 'elim' | 'both';
@@ -3244,4 +3269,115 @@ export const parityApi = {
       body: JSON.stringify(params),
     });
   },
+
+  // ── Combo Tuner ────────────────────────────────────────────────────
+
+  async comboTunerAnalyze(params: {
+    category: string;
+    eventWindow: 'previous20' | 'currentSeason' | 'custom';
+    customEventCount?: number;
+    metric: 'quickest' | 'avg2' | 'avg4';
+    minEventsPerCombo: number;
+    minCombosPerEvent: number;
+    anchorComboId?: number;
+    lockTPower?: boolean;
+    lockDPower?: boolean;
+    lockFF?: boolean;
+  }): Promise<ComboTunerAnalyzeResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'comboTunerAnalyze');
+    qs.set('category', params.category);
+    qs.set('eventWindow', params.eventWindow);
+    qs.set('metric', params.metric);
+    qs.set('minEventsPerCombo', String(params.minEventsPerCombo));
+    qs.set('minCombosPerEvent', String(params.minCombosPerEvent));
+    if (params.customEventCount) qs.set('customEventCount', String(params.customEventCount));
+    if (params.anchorComboId) qs.set('anchorComboId', String(params.anchorComboId));
+    if (params.lockTPower) qs.set('lockTPower', '1');
+    if (params.lockDPower) qs.set('lockDPower', '1');
+    if (params.lockFF) qs.set('lockFF', '1');
+    return parityRequest<ComboTunerAnalyzeResponse>(`/combo-tuner.php?${qs.toString()}`);
+  },
+
+  async comboTunerRecommend(params: {
+    category: string;
+    eventWindow: 'previous20' | 'currentSeason' | 'custom';
+    customEventCount?: number;
+    metric: 'quickest' | 'avg2' | 'avg4';
+    minEventsPerCombo: number;
+    minCombosPerEvent: number;
+    anchorComboId?: number;
+    lockTPower?: boolean;
+    lockDPower?: boolean;
+    lockFF?: boolean;
+  }): Promise<ComboTunerRecommendResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'comboTunerRecommend');
+    qs.set('category', params.category);
+    qs.set('eventWindow', params.eventWindow);
+    qs.set('metric', params.metric);
+    qs.set('minEventsPerCombo', String(params.minEventsPerCombo));
+    qs.set('minCombosPerEvent', String(params.minCombosPerEvent));
+    if (params.customEventCount) qs.set('customEventCount', String(params.customEventCount));
+    if (params.anchorComboId) qs.set('anchorComboId', String(params.anchorComboId));
+    if (params.lockTPower) qs.set('lockTPower', '1');
+    if (params.lockDPower) qs.set('lockDPower', '1');
+    if (params.lockFF) qs.set('lockFF', '1');
+    return parityRequest<ComboTunerRecommendResponse>(`/combo-tuner.php?${qs.toString()}`);
+  },
 };
+
+// ── Combo Tuner Types ───────────────────────────────────────────────────
+
+export interface ComboTunerComboEntry {
+  comboId: number;
+  comboName: string;
+  currentTPower: number;
+  currentDPower: number;
+  currentFF: number;
+  eventCount: number;
+  avgResidual: number;
+}
+
+export interface ComboTunerStats {
+  residualRange: number;
+  residualStdDev: number;
+  score: number;
+}
+
+export interface ComboTunerAnalyzeResponse {
+  eventsUsed: number;
+  runsUsed: number;
+  combosIncluded: ComboTunerComboEntry[];
+  currentStats: ComboTunerStats;
+  excluded?: {
+    events?: Array<{ eventId: number; reason: string }>;
+    runs?: Array<{ runId: number; reason: string }>;
+    combos?: Array<{ comboId: number; comboName: string; reason: string }>;
+  };
+}
+
+export interface ComboTunerRecommendation {
+  comboId: number;
+  comboName: string;
+  proposedTPower: number;
+  proposedDPower: number;
+  proposedFF: number;
+  deltaTPower: number;
+  deltaDPower: number;
+  deltaFF: number;
+  avgResidualBefore: number;
+  avgResidualAfter: number;
+}
+
+export interface ComboTunerSearchMetadata {
+  coarseIterations: number;
+  fineIterations: number;
+  bestScoreFound: number;
+}
+
+export interface ComboTunerRecommendResponse extends ComboTunerAnalyzeResponse {
+  proposedStats: ComboTunerStats;
+  recommendations: ComboTunerRecommendation[];
+  searchMetadata: ComboTunerSearchMetadata;
+}

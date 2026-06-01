@@ -14,7 +14,9 @@ import {
   type BulkUpsertResult as BulkResultType,
 } from '../components/parity/assignmentUtils';
 import { AssignmentPanel } from '../components/parity/AssignmentPanel';
+import { ComboTunerPanel } from '../components/parity/ComboTunerPanel';
 import { useCapabilities } from '../domain/config/useCapabilities';
+import { useFeature } from '../domain/auth';
 import './ParityPortal.css';
 import {
   parityApi,
@@ -43,6 +45,7 @@ import {
   type LadderPairing,
   type DriverEntry,
   type DriverRun,
+  type DriverCategoryEntry,
   type TrackWithStats,
   type ClassAlias,
   type EngineComboRow,
@@ -102,6 +105,7 @@ import IncidentDrawer from './IncidentDrawer';
 import IncidentCell from '../shared/components/IncidentCell';
 import { useAutoRefresh, isEventOngoing } from '../domain/parity/useAutoRefresh';
 import { divApi, DIV_CODES, type DivEventRow, type DivIngestResult, type DivSuggestResponse } from '../services/divApi';
+import RunProfilerPanel from './RunProfilerPanel';
 
 // ── Styles ──────────────────────────────────────────────────────────────
 
@@ -261,7 +265,7 @@ type Tab = 'eventRuns' | 'qualSheet' | 'driverHistory' | 'rtAnalysis' | 'trends'
   | 'adminTracks' | 'adminEvents' | 'classAliases' | 'engineCombos' | 'driverCombos' | 'assignCombos'
   | 'weatherCorrection' | 'backfillWeather' | 'weatherHealth' | 'importStationCsv'
   | 'trackCoords' | 'batchBackfill' | 'timeDiagnostics' | 'bodyStyleDefs' | 'driverBodyStyles' | 'slopeAnalysis'
-  | 'divAdmin';
+  | 'divAdmin' | 'runProfiler';
 
 // Recommended categories shown at the top of the category selector (human-readable names)
 const RECOMMENDED_CATEGORIES = ['Top Fuel', 'Funny Car', 'Pro Stock', 'Pro Stock Motorcycle', 'Pro Mod', 'Top Alcohol Dragster', 'Top Alcohol Funny Car'] as const;
@@ -307,6 +311,7 @@ const ADMIN_TABS: { key: Tab; label: string }[] = [
   { key: 'driverBodyStyles', label: 'Driver Body Styles' },
   { key: 'slopeAnalysis', label: 'Slope Analysis' },
   { key: 'divAdmin', label: 'Div Admin' },
+  { key: 'runProfiler', label: 'Run Profiler' },
 ];
 
 // ── Refresh Result Banner ────────────────────────────────────────────────
@@ -823,6 +828,7 @@ export default function ParityPortal() {
       {tab === 'bodyStyleDefs' && <BodyStyleDefsPanel />}
       {tab === 'driverBodyStyles' && <DriverBodyStylesPanel />}
       {tab === 'divAdmin' && <DivAdminPanel />}
+      {tab === 'runProfiler' && <RunProfilerPanel event={selectedEvent} category={category} />}
     </div>
   );
 }
@@ -1647,7 +1653,7 @@ function IncrementalDrilldown({ runs, flaggedRunIds, classFilter, total, onDrive
 
 // ── Driver Drilldown Panel ──────────────────────────────────────────────
 
-type DriverSortKey = 'event_name' | 'race_lookup' | 'round' | 'lane'
+type DriverSortKey = 'event_code' | 'event_name' | 'track_name' | 'city_state' | 'race_lookup' | 'run_time' | 'round' | 'lane'
   | 'rt' | 'ft60' | 'ft330' | 'ft660' | 'mph660' | 'ft1000' | 'mph1000' | 'ft1320' | 'mph1320'
   | 'corr_et' | 'corr_mph' | 'hpc'
   | 'inc_0_60' | 'inc_60_330' | 'inc_330_660' | 'inc_660_1000' | 'inc_1000_1320'
@@ -1663,9 +1669,12 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
   const [search, setSearch] = useState(initialFilter?.driver ?? '');
   const [driverList, setDriverList] = useState<DriverEntry[]>([]);
   const [selectedDriver, setSelectedDriver] = useState(initialFilter?.driver ?? '');
-  const [classFilter, setClassFilter] = useState(initialFilter?.classIndex ?? '');
-  const [sessionFilter, setSessionFilter] = useState<SessionFilter>('');
+  const [categoryFilter, setCategoryFilter] = useState(initialFilter?.classIndex ?? '');
+  const [driverCategories, setDriverCategories] = useState<DriverCategoryEntry[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [runs, setRuns] = useState<DriverRun[]>([]);
+  const [allRuns, setAllRuns] = useState<DriverRun[]>([]); // full unpaginated for stats
+  const [allRunsLoading, setAllRunsLoading] = useState(false);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [driverLoading, setDriverLoading] = useState(false);
@@ -1673,6 +1682,8 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
 
   // Assignment management state
   const [showAssignments, setShowAssignments] = useState(false);
+  const [showAllYears, setShowAllYears] = useState(false);
+  const STATS_DEFAULT_YEARS = 5;
 
   // Incident drawer state
   const [drawerRunId, setDrawerRunId] = useState<number | null>(null);
@@ -1683,7 +1694,6 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
   }, []);
   const [sortKey, setSortKey] = useState<DriverSortKey>('race_lookup');
   const [sortDir, setSortDir] = useState<DriverSortDir>('desc');
-  const [valueMode, setValueMode] = useState<ValueMode>('raw');
   const [showColPicker, setShowColPicker] = useState(false);
 
   // Per-column text filters (Excel-style)
@@ -1694,11 +1704,15 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
   const hasDhColFilters = Object.keys(dhColFilters).length > 0;
 
   // Driver History column picker — persisted in localStorage
-  const DH_COL_LS_KEY = 'parity_driverHistoryCols_v2';
-  type DHColKey = 'event_name' | 'race_lookup' | 'round' | 'lane' | 'rt' | 'ft60' | 'ft330' | 'ft660' | 'mph660' | 'ft1000' | 'mph1000' | 'ft1320' | 'mph1320' | 'corr_et' | 'corr_mph' | 'hpc' | 'inc_0_60' | 'inc_60_330' | 'inc_330_660' | 'inc_660_1000' | 'inc_1000_1320' | 'wx_temp' | 'wx_press' | 'wx_rh' | 'win_flag' | 'dq_flag';
+  const DH_COL_LS_KEY = 'parity_driverHistoryCols_v3';
+  type DHColKey = 'event_code' | 'event_name' | 'track_name' | 'city_state' | 'race_lookup' | 'run_time' | 'round' | 'lane' | 'rt' | 'ft60' | 'ft330' | 'ft660' | 'mph660' | 'ft1000' | 'mph1000' | 'ft1320' | 'mph1320' | 'corr_et' | 'corr_mph' | 'hpc' | 'inc_0_60' | 'inc_60_330' | 'inc_330_660' | 'inc_660_1000' | 'inc_1000_1320' | 'wx_temp' | 'wx_press' | 'wx_rh' | 'win_flag' | 'dq_flag';
   const DH_ALL_COLS: { key: DHColKey; label: string; group: 'core' | 'timing' | 'splits' | 'corrected' | 'weather' | 'extra'; defaultOn: boolean }[] = [
-    { key: 'event_name',     label: 'Event',       group: 'core',      defaultOn: true  },
+    { key: 'event_code',     label: 'Event Code',  group: 'core',      defaultOn: true  },
+    { key: 'event_name',     label: 'Event Name',  group: 'core',      defaultOn: false },
+    { key: 'track_name',     label: 'Track',       group: 'core',      defaultOn: false },
+    { key: 'city_state',     label: 'Location',    group: 'core',      defaultOn: false },
     { key: 'race_lookup',    label: 'Date',        group: 'core',      defaultOn: true  },
+    { key: 'run_time',       label: 'Time',        group: 'core',      defaultOn: true  },
     { key: 'round',          label: 'Rnd',         group: 'core',      defaultOn: true  },
     { key: 'lane',           label: 'Ln',          group: 'core',      defaultOn: false },
     { key: 'rt',             label: 'RT',          group: 'timing',    defaultOn: true  },
@@ -1759,9 +1773,26 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
       loadedRef.current = true;
       setSearch(initialFilter.driver);
       setSelectedDriver(initialFilter.driver);
-      setClassFilter(initialFilter.classIndex ?? '');
+      setCategoryFilter(initialFilter.classIndex ?? '');
     }
   }, [initialFilter?.driver, initialFilter?.classIndex]);
+
+  // Load driver categories when a driver is selected
+  useEffect(() => {
+    if (!selectedDriver) { setDriverCategories([]); return; }
+    setCategoriesLoading(true);
+    parityApi.driverCategories(selectedDriver)
+      .then(res => {
+        setDriverCategories(res.categories);
+        // Auto-select: category with most runs in last 90 days; tie-break by total
+        if (res.categories.length > 0 && !initialFilter?.classIndex) {
+          setCategoryFilter(res.categories[0].category);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setCategoriesLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedDriver]);
 
   // Debounced driver search
   useEffect(() => {
@@ -1769,13 +1800,13 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     const timer = setTimeout(async () => {
       setDriverLoading(true);
       try {
-        const res = await parityApi.drivers({ search, classIndex: classFilter || undefined, limit: 20 });
+        const res = await parityApi.drivers({ search, limit: 20 });
         setDriverList(res.drivers);
       } catch { /* ignore */ }
       setDriverLoading(false);
     }, 300);
     return () => clearTimeout(timer);
-  }, [search, classFilter]);
+  }, [search]);
 
   const loadRuns = useCallback(async (driver: string, offset: number) => {
     if (!driver) return;
@@ -1783,8 +1814,7 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     try {
       const res = await parityApi.runsByDriver({
         driverName: driver,
-        classIndex: classFilter || undefined,
-        session: sessionFilter || undefined,
+        category: categoryFilter || undefined,
         includeWeather: true,
         limit: pageSize,
         offset,
@@ -1793,20 +1823,45 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
       setTotal(res.total);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [classFilter, sessionFilter, pageSize]);
+  }, [categoryFilter, pageSize]);
+
+  // Full unpaginated fetch for stats table
+  const loadAllRuns = useCallback(async (driver: string, cat: string) => {
+    if (!driver || !cat) { setAllRuns([]); return; }
+    setAllRunsLoading(true);
+    try {
+      const res = await parityApi.runsByDriver({
+        driverName: driver,
+        category: cat,
+        includeWeather: true,
+        limit: 2000,
+        offset: 0,
+      });
+      setAllRuns(res.runs);
+    } catch { setAllRuns([]); }
+    setAllRunsLoading(false);
+  }, []);
 
   // Reset to first page when filters change
-  useEffect(() => { setCurrentOffset(0); }, [classFilter, sessionFilter, pageSize]);
+  useEffect(() => { setCurrentOffset(0); }, [categoryFilter, pageSize]);
 
-  // Reload when driver, filters, or page changes
+  // Reload paginated runs when driver, filters, or page changes
   useEffect(() => {
     if (selectedDriver) loadRuns(selectedDriver, currentOffset);
   }, [selectedDriver, currentOffset, loadRuns]);
+
+  // Reload stats (full) when driver or category changes
+  useEffect(() => {
+    if (selectedDriver && categoryFilter) loadAllRuns(selectedDriver, categoryFilter);
+  }, [selectedDriver, categoryFilter, loadAllRuns]);
 
   const selectDriver = useCallback((driver: string) => {
     setSelectedDriver(driver);
     setSearch(driver);
     setDriverList([]);
+    setCategoryFilter('');
+    setAllRuns([]);
+    setShowAllYears(false);
   }, []);
 
   const handleSort = (key: DriverSortKey) => {
@@ -1814,24 +1869,9 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     else { setSortKey(key); setSortDir(key === 'race_lookup' ? 'desc' : 'asc'); }
   };
 
-  // Client-side HPC correction — replaces backend corrected_* fields
-  const getCorrected = useCallback((r: DriverRun) => {
-    if (valueMode !== 'corrected' || !corrCtx) return null;
-    return correctRunClientSide(r, corrCtx);
-  }, [valueMode, corrCtx]);
-
-  const getET = (r: DriverRun) => {
-    const c = getCorrected(r);
-    return c?.correctedET != null ? c.correctedET : r.ft1320;
-  };
-  const get60 = (r: DriverRun) => {
-    const c = getCorrected(r);
-    return c?.corrected60 != null ? c.corrected60 : r.ft60;
-  };
-  const getMPH = (r: DriverRun) => {
-    const c = getCorrected(r);
-    return c?.correctedMPH != null ? c.correctedMPH : r.mph1320;
-  };
+  // Client-side HPC correction (always raw display; corr columns are opt-in)
+  const getET = (r: DriverRun) => r.ft1320;
+  const getMPH = (r: DriverRun) => r.mph1320;
 
   const getDriverSortValue = (r: DriverRun, key: DriverSortKey): any => {
     if (key === 'wx_temp') return r.weather?.temp_f ?? null;
@@ -1839,6 +1879,8 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     if (key === 'wx_rh') return r.weather?.rh_pct ?? null;
     if (key === 'win_flag') return r.win_flag ? 1 : 0;
     if (key === 'dq_flag') return r.dq_flag ? 1 : 0;
+    if (key === 'city_state') return [r.city, r.state].filter(Boolean).join(', ');
+    if (key === 'run_time') return r.run_timestamp_utc ?? null;
     if (key === 'corr_et' || key === 'corr_mph' || key === 'hpc') {
       const c = corrCtx ? correctRunClientSide(r, corrCtx) : null;
       if (key === 'corr_et') return c?.correctedET ?? r.ft1320 ?? null;
@@ -1848,11 +1890,24 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     return (r as any)[key] ?? null;
   };
 
+  // Format run_timestamp_utc as local time using track_timezone
+  const formatRunTime = (r: DriverRun): string => {
+    if (!r.run_timestamp_utc) return '—';
+    try {
+      const tz = r.track_timezone ?? 'UTC';
+      return new Date(r.run_timestamp_utc).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: tz });
+    } catch { return '—'; }
+  };
+
   // Driver col filter helper — formats a cell value as string for matching
   const getDhCellStr = (r: DriverRun, key: DHColKey): string => {
     const c = corrCtx ? correctRunClientSide(r, corrCtx) : null;
     switch (key) {
+      case 'event_code': return r.event_code || '';
       case 'event_name': return r.event_name || '';
+      case 'track_name': return r.track_name || '';
+      case 'city_state': return [r.city, r.state].filter(Boolean).join(', ');
+      case 'run_time': return formatRunTime(r);
       case 'race_lookup': return r.race_lookup || '';
       case 'round': return r.round || '';
       case 'lane': return r.lane || '';
@@ -1911,59 +1966,112 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
     background: 'var(--color-surface, #1e1e2e)', cursor: 'pointer',
   };
 
-  // Enhanced stats calculations
-  const validRuns = runs.filter(r => r.ft1320 != null && r.ft1320 > 0 && !r.dq_flag);
-  const bestEt = validRuns.length > 0 ? Math.min(...validRuns.map(r => getET(r)!).filter(v => v > 0)) : null;
-  const bestMph = validRuns.length > 0 ? Math.max(...validRuns.map(r => getMPH(r)!).filter(v => v > 0)) : null;
-  const eventCount = new Set(runs.map(r => r.race_lookup)).size;
-  const weatherCount = runs.filter(r => r.weather).length;
+  // Year-by-year stats computed from full allRuns fetch
+  type YearStat = {
+    year: string;
+    events: number;
+    avgQualPos: number | null;
+    elimRounds: number;
+    roundsWon: number;
+    bestET: number | null;
+    bestMPH: number | null;
+    bestCorrET: number | null;
+    bestCorrMPH: number | null;
+    avgElimRT: number | null;
+  };
+
+  const yearStats: YearStat[] = useMemo(() => {
+    if (!allRuns.length) return [];
+    const byYear: Record<string, DriverRun[]> = {};
+    for (const r of allRuns) {
+      const yr = r.race_lookup?.slice(0, 4) ?? 'Unknown';
+      (byYear[yr] = byYear[yr] ?? []).push(r);
+    }
+    return Object.entries(byYear)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .map(([year, yRuns]) => {
+        const eventKeys = [...new Set(yRuns.map(r => r.race_lookup))];
+        const events = eventKeys.length;
+        // For each event, take the place from the last qual round (highest Q number = final position)
+        const qualPositions: number[] = [];
+        for (const ek of eventKeys) {
+          const eventQuals = yRuns
+            .filter(r => r.race_lookup === ek && r.round?.match(/^Q\d+$/) && r.place != null)
+            .sort((a, b) => (b.round ?? '').localeCompare(a.round ?? ''));
+          if (eventQuals.length > 0) {
+            const pos = parseInt(eventQuals[0].place ?? '0');
+            if (pos > 0) qualPositions.push(pos);
+          }
+        }
+        const avgQualPos = qualPositions.length > 0
+          ? qualPositions.reduce((s, p) => s + p, 0) / qualPositions.length
+          : null;
+        const elimRuns = yRuns.filter(r => r.round && !r.round.startsWith('Q'));
+        const elimRounds = elimRuns.length;
+        const roundsWon = elimRuns.filter(r => r.win_flag).length;
+        const validET = yRuns.filter(r => r.ft1320 != null && r.ft1320 > 0 && !r.dq_flag);
+        const bestET = validET.length > 0 ? Math.min(...validET.map(r => r.ft1320!)) : null;
+        const bestMPH = validET.length > 0 ? Math.max(...validET.map(r => r.mph1320 ?? 0)) : null;
+        const corrVals = validET
+          .map(r => corrCtx ? correctRunClientSide(r, corrCtx) : null)
+          .filter((c): c is NonNullable<typeof c> => c != null && c.correctedET != null);
+        const bestCorrET = corrVals.length > 0 ? Math.min(...corrVals.map(c => c.correctedET!)) : null;
+        const bestCorrMPH = corrVals.length > 0 ? Math.max(...corrVals.map(c => c.correctedMPH ?? 0)) : null;
+        const elimRTs = elimRuns.filter(r => r.rt != null && !r.dq_flag).map(r => r.rt!);
+        const avgElimRT = elimRTs.length > 0 ? elimRTs.reduce((a, b) => a + b, 0) / elimRTs.length : null;
+        return { year, events, avgQualPos, elimRounds, roundsWon, bestET, bestMPH, bestCorrET, bestCorrMPH, avgElimRT };
+      });
+  }, [allRuns, corrCtx]);
 
   // CSV export
   const exportCsv = useCallback(() => {
     if (!runs.length) return;
-    const hdr = ['Event', 'Date', 'Round', 'Lane', 'RT', '60ft', '330', '660', 'MPH@660', '1000', 'MPH@1000', 'ET', 'MPH',
+    const hdr = ['Event Code', 'Event Name', 'Track', 'Location', 'Date', 'Time', 'Round', 'Lane', 'RT',
+      '60ft', '330', '660', 'MPH@660', '1000', 'MPH@1000', 'ET', 'MPH',
       'Corr ET', 'Corr MPH', 'HPC', 'Temp F', 'Press inHg', 'RH%', 'Win', 'DQ'];
     const rows = sortedRuns.map(r => {
       const c = corrCtx ? correctRunClientSide(r, corrCtx) : null;
       return [
-        r.event_name || '', r.race_lookup || '', r.round || '', r.lane || '',
-        formatET(r.rt) !== '—' ? formatET(r.rt) : '', formatET(r.ft60) !== '—' ? formatET(r.ft60) : '', formatET(r.ft330) !== '—' ? formatET(r.ft330) : '', formatET(r.ft660) !== '—' ? formatET(r.ft660) : '',
-        r.mph660 != null ? formatMPH(r.mph660) : '', formatET(r.ft1000) !== '—' ? formatET(r.ft1000) : '', r.mph1000 != null ? formatMPH(r.mph1000) : '',
-        formatET(r.ft1320) !== '—' ? formatET(r.ft1320) : '', r.mph1320 != null ? formatMPH(r.mph1320) : '',
+        r.event_code || '', r.event_name || '',
+        r.track_name || '', [r.city, r.state].filter(Boolean).join(', '),
+        r.race_lookup ? `${r.race_lookup.slice(0,4)}-${r.race_lookup.slice(4,6)}-${r.race_lookup.slice(6)}` : '',
+        formatRunTime(r),
+        r.round || '', r.lane || '',
+        r.rt != null ? formatET(r.rt) : '',
+        r.ft60 != null ? formatET(r.ft60) : '', r.ft330 != null ? formatET(r.ft330) : '',
+        r.ft660 != null ? formatET(r.ft660) : '', r.mph660 != null ? formatMPH(r.mph660) : '',
+        r.ft1000 != null ? formatET(r.ft1000) : '', r.mph1000 != null ? formatMPH(r.mph1000) : '',
+        r.ft1320 != null ? formatET(r.ft1320) : '', r.mph1320 != null ? formatMPH(r.mph1320) : '',
         c?.correctedET != null ? formatET(c.correctedET) : '', c?.correctedMPH != null ? formatMPH(c.correctedMPH) : '',
         c?.hpc != null ? c.hpc.toFixed(6) : '',
-        r.weather?.temp_f != null ? formatTemp(r.weather.temp_f) : '', r.weather?.pressure_inhg != null ? formatBaro(r.weather.pressure_inhg) : '', r.weather?.rh_pct != null ? formatRH(r.weather.rh_pct) : '',
+        r.weather?.temp_f != null ? formatTemp(r.weather.temp_f) : '',
+        r.weather?.pressure_inhg != null ? formatBaro(r.weather.pressure_inhg) : '',
+        r.weather?.rh_pct != null ? formatRH(r.weather.rh_pct) : '',
         r.win_flag ? 'Y' : '', r.dq_flag ? 'Y' : '',
       ];
     });
-    const csv = [hdr, ...rows].map(r => r.join(',')).join('\n');
+    const csv = [hdr, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url; a.download = `driver-history-${selectedDriver.replace(/\s+/g, '_')}.csv`;
     a.click(); URL.revokeObjectURL(url);
-  }, [runs, sortedRuns, selectedDriver]);
+  }, [runs, sortedRuns, selectedDriver, corrCtx]);
 
   // Refresh callback for assignment changes
   const handleAssignmentChanged = useCallback(() => {
-    // Reload correction context for engine combo assignments
-    loadCorrectionContext()
-      .then(setCorrCtx)
-      .catch(() => {});
-    // Reload runs if in corrected mode to reflect new assignment state
-    if (valueMode === 'corrected' && selectedDriver) {
-      loadRuns(selectedDriver, currentOffset);
-    }
-  }, [loadRuns, selectedDriver, currentOffset, valueMode]);
+    loadCorrectionContext().then(setCorrCtx).catch(() => {});
+    if (selectedDriver) loadRuns(selectedDriver, currentOffset);
+  }, [loadRuns, selectedDriver, currentOffset]);
 
   return (
     <div>
-      {/* Search / filter row */}
-      <div className="parity-form-row" style={{ marginBottom: '0.5rem' }}>
+      {/* ── Search / filter row ── */}
+      <div className="parity-form-row" style={{ marginBottom: '0.5rem', alignItems: 'center' }}>
         <div style={{ position: 'relative' }}>
           <input style={{ ...S.input, width: 240 }} placeholder="Search driver name..."
-            value={search} onChange={e => { setSearch(e.target.value); setSelectedDriver(''); }} />
-          {driverLoading && <span style={{ position: 'absolute', right: 8, top: 8, fontSize: '0.7rem' }}>...</span>}
+            value={search} onChange={e => { setSearch(e.target.value); setSelectedDriver(''); setDriverCategories([]); }} />
+          {driverLoading && <span style={{ position: 'absolute', right: 8, top: 8, fontSize: '0.7rem' }}>…</span>}
           {driverList.length > 0 && !selectedDriver && (
             <div style={{
               position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10,
@@ -1977,7 +2085,7 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
                 }} onClick={() => selectDriver(d.driver)}>
                   <b>{d.driver}</b>
                   <span style={{ color: 'var(--color-muted)', marginLeft: 8, fontSize: '0.7rem' }}>
-                    {d.run_count} runs · {d.event_count} events · {formatET(d.best_et)} ET
+                    {d.run_count} runs{d.top_category ? ` · ${d.top_category}` : ''}
                   </span>
                 </div>
               ))}
@@ -1985,27 +2093,32 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
           )}
         </div>
 
-        <b style={{ fontSize: '0.8rem', marginLeft: 8 }}>Class:</b>
-        {['', 'TF', 'FC', 'PS', 'PSM', 'TD', 'TS'].map(c => (
-          <button key={c || 'all'} style={{ ...S.btn(classFilter === c ? 'primary' : 'secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-            onClick={() => setClassFilter(c)}>
-            {c || 'All'}
-          </button>
-        ))}
-
-        <span style={{ width: 1, height: 20, background: 'var(--color-border)', margin: '0 0.25rem' }} />
-
-        <b style={{ fontSize: '0.8rem' }}>Session:</b>
-        {([['', 'All'], ['qual', 'Qual'], ['elim', 'Elim']] as [SessionFilter, string][]).map(([v, lbl]) => (
-          <button key={v || 'all-sess'} style={{ ...S.btn(sessionFilter === v ? 'primary' : 'secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-            onClick={() => setSessionFilter(v)}>
-            {lbl}
-          </button>
-        ))}
+        {selectedDriver && (
+          <>
+            <b style={{ fontSize: '0.8rem', marginLeft: 8 }}>Category:</b>
+            {categoriesLoading
+              ? <span style={{ fontSize: '0.75rem', color: 'var(--color-muted)' }}>Loading…</span>
+              : (
+                <select
+                  value={categoryFilter}
+                  onChange={e => setCategoryFilter(e.target.value)}
+                  style={{ ...S.input, width: 'auto', minWidth: 80, fontSize: '0.8rem', padding: '0.2rem 0.4rem' }}
+                >
+                  {driverCategories.map(cat => (
+                    <option key={cat.category} value={cat.category}>
+                      {cat.category} ({cat.total_run_count} runs)
+                    </option>
+                  ))}
+                  {driverCategories.length === 0 && <option value="">No data</option>}
+                </select>
+              )
+            }
+          </>
+        )}
       </div>
 
-      {/* Toolbar row */}
-      {runs.length > 0 && (
+      {/* ── Toolbar row ── */}
+      {selectedDriver && (
         <div className="parity-form-row" style={{ marginBottom: '0.5rem', flexWrap: 'wrap' }}>
           <button style={{ ...S.btn(showColPicker ? 'primary' : 'secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
             onClick={() => setShowColPicker(v => !v)}>
@@ -2014,18 +2127,10 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
 
           <span style={{ width: 1, height: 20, background: 'var(--color-border)', margin: '0 0.25rem' }} />
 
-          <b style={{ fontSize: '0.8rem' }}>Values:</b>
-          {(['raw', 'corrected'] as ValueMode[]).map(m => (
-            <button key={m} style={{ ...S.btn(valueMode === m ? 'primary' : 'secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-              onClick={() => setValueMode(m)}>
-              {m === 'raw' ? 'Raw' : 'Corrected'}
-            </button>
-          ))}
-
-          <span style={{ width: 1, height: 20, background: 'var(--color-border)', margin: '0 0.25rem' }} />
-
           <button style={{ ...S.btn(showAssignments ? 'primary' : 'secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem' }}
-            onClick={() => setShowAssignments(v => !v)}>
+            disabled={!categoryFilter}
+            onClick={() => setShowAssignments(v => !v)}
+            title={!categoryFilter ? 'Select a category first' : undefined}>
             {showAssignments ? 'Hide Assignments' : 'Assignments'}
           </button>
 
@@ -2036,13 +2141,13 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
           )}
 
           <button style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem', marginLeft: 'auto' }}
-            onClick={exportCsv}>
+            onClick={exportCsv} disabled={!runs.length}>
             Export CSV
           </button>
         </div>
       )}
 
-      {/* Flat column picker */}
+      {/* ── Column picker ── */}
       {showColPicker && (
         <div style={{ ...S.card, padding: '0.5rem 0.75rem', marginBottom: '0.75rem' }}>
           <div style={{ display: 'flex', gap: '0.4rem', marginBottom: '0.5rem', alignItems: 'center' }}>
@@ -2050,10 +2155,10 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
             <button style={{ ...S.btn('secondary'), fontSize: '0.6rem', padding: '0.1rem 0.4rem' }} onClick={() => toggleAllDhCols(true)}>All On</button>
             <button style={{ ...S.btn('secondary'), fontSize: '0.6rem', padding: '0.1rem 0.4rem' }} onClick={() => toggleAllDhCols(false)}>Defaults</button>
           </div>
-          {(['core', 'timing', 'splits', 'corrected', 'weather', 'extra'] as const).map(grp => (
+          {(['core', 'timing', 'corrected', 'splits', 'weather', 'extra'] as const).map(grp => (
             <div key={grp} style={{ marginBottom: '0.4rem' }}>
               <div style={{ fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', color: 'var(--color-muted)', marginBottom: '0.2rem', letterSpacing: '0.05em' }}>
-                {grp === 'core' ? 'Core' : grp === 'timing' ? 'Timing' : grp === 'splits' ? 'Splits' : grp === 'corrected' ? 'Weather Corrected' : grp === 'weather' ? 'Weather' : 'Extra'}
+                {grp === 'core' ? 'Core' : grp === 'timing' ? 'Timing' : grp === 'corrected' ? 'Weather Corrected' : grp === 'splits' ? 'Splits' : grp === 'weather' ? 'Weather' : 'Extra'}
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', fontSize: '0.75rem' }}>
                 {DH_ALL_COLS.filter(c => c.group === grp).map(c => (
@@ -2068,91 +2173,72 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
         </div>
       )}
 
-      {loading && <div style={S.hint}>Loading runs...</div>}
+      {loading && <div style={S.hint}>Loading runs…</div>}
       {error && <div style={S.error}>{error}</div>}
 
-      {/* Enhanced Driver stats header */}
-      {selectedDriver && runs.length > 0 && !loading && (() => {
-        const etValues = validRuns.map(r => getET(r)!).filter(v => v > 0);
-        const avgEt = etValues.length > 0 ? etValues.reduce((a, b) => a + b, 0) / etValues.length : null;
-        const etStdDev = etValues.length > 1 
-          ? Math.sqrt(etValues.reduce((sum, v) => sum + Math.pow(v - avgEt!, 2), 0) / etValues.length)
-          : null;
-        const consistencyScore = etStdDev != null && avgEt != null ? (1 - (etStdDev / avgEt)) * 100 : null;
-        
-        const qualRuns = validRuns.filter(r => r.round?.startsWith('Q'));
-        const elimRuns = validRuns.filter(r => !r.round?.startsWith('Q'));
-        const bestQualEt = qualRuns.length > 0 ? Math.min(...qualRuns.map(r => getET(r)!).filter(v => v > 0)) : null;
-        const bestElimEt = elimRuns.length > 0 ? Math.min(...elimRuns.map(r => getET(r)!).filter(v => v > 0)) : null;
-        
-        const recentRuns = validRuns.slice(0, 10);
-        const historicalRuns = validRuns.slice(10);
-        const recentAvg = recentRuns.length > 0 
-          ? recentRuns.reduce((sum, r) => sum + getET(r)!, 0) / recentRuns.length
-          : null;
-        const historicalAvg = historicalRuns.length > 0
-          ? historicalRuns.reduce((sum, r) => sum + getET(r)!, 0) / historicalRuns.length
-          : null;
-        const improvementTrend = recentAvg != null && historicalAvg != null ? historicalAvg - recentAvg : null;
-        
-        return (
-          <>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.5rem' }}>
-              <div style={S.stat}><b>{selectedDriver}</b></div>
-              <div style={S.stat}>{total} runs</div>
-              <div style={S.stat}>{eventCount} events</div>
-              {bestEt != null && <div style={S.stat}>Best ET{valueMode === 'corrected' ? ' (corr)' : ''}: <b style={{ color: '#16a34a' }}>{formatET(bestEt)}</b></div>}
-              {bestMph != null && <div style={S.stat}>Top MPH: <b style={{ color: '#2563eb' }}>{formatMPH(bestMph)}</b></div>}
-              {avgEt != null && <div style={S.stat}>Avg ET: {formatET(avgEt)}</div>}
-              {consistencyScore != null && (
-                <div style={S.stat}>
-                  Consistency: <b style={{ color: consistencyScore > 98 ? '#16a34a' : consistencyScore > 95 ? '#eab308' : '#ef4444' }}>
-                    {consistencyScore.toFixed(1)}%
-                  </b>
-                  <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', marginLeft: 4 }}>
-                    (σ={etStdDev?.toFixed(3)})
-                  </span>
-                </div>
-              )}
-              {weatherCount > 0 && <div style={S.stat}><span style={{ color: 'var(--color-muted)' }}>{weatherCount}/{runs.length} weather</span></div>}
-            </div>
-            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem', fontSize: '0.75rem' }}>
-              {bestQualEt != null && <div style={S.stat}>Best Qual: <b style={{ color: '#16a34a' }}>{formatET(bestQualEt)}</b> ({qualRuns.length} runs)</div>}
-              {bestElimEt != null && <div style={S.stat}>Best Elim: <b style={{ color: '#16a34a' }}>{formatET(bestElimEt)}</b> ({elimRuns.length} runs)</div>}
-              {improvementTrend != null && (
-                <div style={S.stat}>
-                  Trend (last 10): <b style={{ color: improvementTrend > 0 ? '#16a34a' : improvementTrend < -0.02 ? '#ef4444' : '#eab308' }}>
-                    {improvementTrend > 0 ? '↓' : improvementTrend < 0 ? '↑' : '→'} {Math.abs(improvementTrend).toFixed(3)}s
-                  </b>
-                  <span style={{ fontSize: '0.65rem', color: 'var(--color-muted)', marginLeft: 4 }}>
-                    {improvementTrend > 0 ? 'improving' : improvementTrend < -0.02 ? 'slower' : 'stable'}
-                  </span>
-                </div>
-              )}
-            </div>
-          </>
-        );
-      })()}
-
-      {/* Assignment Management Panel */}
-      {showAssignments && selectedDriver && classFilter && !loading && (
+      {/* ── Assignment Panel ── */}
+      {showAssignments && selectedDriver && categoryFilter && (
         <AssignmentPanel
           driverName={selectedDriver}
-          classIndex={classFilter}
+          classIndex={categoryFilter}
           onAssignmentChanged={handleAssignmentChanged}
           showBodyStyles={true}
         />
       )}
 
+      {/* ── Year Stats Table ── */}
+      {selectedDriver && categoryFilter && yearStats.length > 0 && (() => {
+        const visibleStats = showAllYears ? yearStats : yearStats.slice(0, STATS_DEFAULT_YEARS);
+        return (
+          <div style={{ marginBottom: '0.75rem', overflowX: 'auto' }}>
+            <div style={{ fontSize: '0.7rem', fontWeight: 700, color: 'var(--color-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.25rem' }}>
+              {selectedDriver} — {categoryFilter} — Career Stats
+              {allRunsLoading && <span style={{ color: 'var(--color-muted)', fontWeight: 400, marginLeft: 8 }}>loading…</span>}
+            </div>
+            <table style={{ ...S.table, fontSize: '0.75rem' }}>
+              <thead>
+                <tr>
+                  {['Year', 'Events', 'Avg Qual Pos', 'Elim Rnds', 'Rounds Won', 'Best ET', 'Best MPH', 'Best Corr ET', 'Best Corr MPH', 'Avg Elim RT'].map(h => (
+                    <th key={h} style={{ ...S.th, whiteSpace: 'nowrap', background: 'var(--color-surface, #1e1e2e)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visibleStats.map((s, i) => (
+                  <tr key={s.year} style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined }}>
+                    <td style={{ ...S.td, fontWeight: 700 }}>{s.year}</td>
+                    <td style={S.td}>{s.events}</td>
+                    <td style={S.td}>{s.avgQualPos != null ? s.avgQualPos.toFixed(1) : '—'}</td>
+                    <td style={S.td}>{s.elimRounds}</td>
+                    <td style={S.td}>{s.elimRounds > 0 ? s.roundsWon : '—'}</td>
+                    <td style={{ ...S.td, fontWeight: 600, color: '#16a34a' }}>{s.bestET != null ? formatET(s.bestET) : '—'}</td>
+                    <td style={{ ...S.td, fontWeight: 600, color: '#2563eb' }}>{s.bestMPH != null && s.bestMPH > 0 ? formatMPH(s.bestMPH) : '—'}</td>
+                    <td style={{ ...S.td, color: '#7c3aed' }}>{s.bestCorrET != null ? formatET(s.bestCorrET) : '—'}</td>
+                    <td style={{ ...S.td, color: '#7c3aed' }}>{s.bestCorrMPH != null && s.bestCorrMPH > 0 ? formatMPH(s.bestCorrMPH) : '—'}</td>
+                    <td style={S.td}>{s.avgElimRT != null ? formatET(s.avgElimRT) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {yearStats.length > STATS_DEFAULT_YEARS && (
+              <button
+                style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.1rem 0.5rem', marginTop: '0.3rem' }}
+                onClick={() => setShowAllYears(v => !v)}>
+                {showAllYears ? `Show less ▲` : `Show ${yearStats.length - STATS_DEFAULT_YEARS} more years ▼`}
+              </button>
+            )}
+          </div>
+        );
+      })()}
 
-      {/* Runs table */}
+      {/* ── Runs table ── */}
       {selectedDriver && runs.length > 0 && !loading && (
         <div className="parity-table-wrap" style={{ maxHeight: 500 }}>
           <table style={S.table}>
             <thead>
               <tr>
                 {dhActiveCols.map(col => {
-                  const ALL_DRIVER_SORT_KEYS: DriverSortKey[] = ['event_name','race_lookup','round','lane','rt','ft60','ft330','ft660','mph660','ft1000','mph1000','ft1320','mph1320','corr_et','corr_mph','hpc','inc_0_60','inc_60_330','inc_330_660','inc_660_1000','inc_1000_1320','wx_temp','wx_press','wx_rh','win_flag','dq_flag'];
+                  const ALL_DRIVER_SORT_KEYS: DriverSortKey[] = ['event_code','event_name','track_name','city_state','race_lookup','run_time','round','lane','rt','ft60','ft330','ft660','mph660','ft1000','mph1000','ft1320','mph1320','corr_et','corr_mph','hpc','inc_0_60','inc_60_330','inc_330_660','inc_660_1000','inc_1000_1320','wx_temp','wx_press','wx_rh','win_flag','dq_flag'];
                   const sk = ALL_DRIVER_SORT_KEYS.includes(col.key as DriverSortKey) ? col.key as DriverSortKey : null;
                   return <th key={col.key} style={{ ...stickyTh, cursor: sk ? 'pointer' : undefined }} onClick={sk ? () => handleSort(sk) : undefined}>{col.label}{sk ? arrow(sk) : ''}</th>;
                 })}
@@ -2182,12 +2268,16 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
                   <tr key={r.id} style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined, ...dqStyle }}>
                     {dhActiveCols.map(col => {
                       switch (col.key) {
-                        case 'event_name': return <td key={col.key} style={{ ...S.td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.event_name || r.race_lookup}</td>;
+                        case 'event_code': return <td key={col.key} style={{ ...S.td, fontFamily: 'monospace', fontWeight: 600 }}>{r.event_code || r.race_lookup}</td>;
+                        case 'event_name': return <td key={col.key} style={{ ...S.td, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.event_name || '—'}</td>;
+                        case 'track_name': return <td key={col.key} style={{ ...S.td, maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.track_name || '—'}</td>;
+                        case 'city_state': return <td key={col.key} style={{ ...S.td, whiteSpace: 'nowrap' }}>{[r.city, r.state].filter(Boolean).join(', ') || '—'}</td>;
                         case 'race_lookup': return <td key={col.key} style={S.td}>{r.race_lookup ? `${r.race_lookup.slice(0,4)}-${r.race_lookup.slice(4,6)}-${r.race_lookup.slice(6)}` : '—'}</td>;
+                        case 'run_time': return <td key={col.key} style={{ ...S.td, whiteSpace: 'nowrap', fontSize: '0.75rem' }}>{formatRunTime(r)}</td>;
                         case 'round': return <td key={col.key} style={S.td}>{r.round || '—'}</td>;
                         case 'lane': return <td key={col.key} style={S.td}>{r.lane || '—'}</td>;
                         case 'rt': return <td key={col.key} style={S.td}>{formatET(r.rt)}</td>;
-                        case 'ft60': return <td key={col.key} style={S.td}>{formatET(get60(r))}</td>;
+                        case 'ft60': return <td key={col.key} style={S.td}>{r.ft60 != null ? formatET(r.ft60) : '—'}</td>;
                         case 'ft330': return <td key={col.key} style={S.td}>{r.ft330 != null ? formatET(r.ft330) : '—'}</td>;
                         case 'ft660': return <td key={col.key} style={S.td}>{r.ft660 != null ? formatET(r.ft660) : '—'}</td>;
                         case 'mph660': return <td key={col.key} style={S.td}>{r.mph660 != null ? formatMPH(r.mph660) : '—'}</td>;
@@ -2195,8 +2285,8 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
                         case 'mph1000': return <td key={col.key} style={S.td}>{r.mph1000 != null ? formatMPH(r.mph1000) : '—'}</td>;
                         case 'ft1320': return <td key={col.key} style={{ ...S.td, fontWeight: 600 }}>{formatET(getET(r))}</td>;
                         case 'mph1320': return <td key={col.key} style={{ ...S.td, fontWeight: 600 }}>{formatMPH(getMPH(r))}</td>;
-                        case 'corr_et': return <td key={col.key} style={{ ...S.td, color: '#2563eb', fontWeight: 600 }}>{c?.correctedET != null ? formatET(c.correctedET) : '—'}</td>;
-                        case 'corr_mph': return <td key={col.key} style={{ ...S.td, color: '#2563eb', fontWeight: 600 }}>{c?.correctedMPH != null ? formatMPH(c.correctedMPH) : '—'}</td>;
+                        case 'corr_et': return <td key={col.key} style={{ ...S.td, color: '#7c3aed', fontWeight: 600 }}>{c?.correctedET != null ? formatET(c.correctedET) : '—'}</td>;
+                        case 'corr_mph': return <td key={col.key} style={{ ...S.td, color: '#7c3aed', fontWeight: 600 }}>{c?.correctedMPH != null ? formatMPH(c.correctedMPH) : '—'}</td>;
                         case 'hpc': return <td key={col.key} style={{ ...S.td, fontFamily: 'monospace', fontSize: '0.7rem' }}>{c?.hpc != null ? c.hpc.toFixed(6) : '—'}</td>;
                         case 'inc_0_60': return <td key={col.key} style={{ ...S.td, fontFamily: 'monospace' }}>{r.inc_0_60?.toFixed(4) ?? '—'}</td>;
                         case 'inc_60_330': return <td key={col.key} style={{ ...S.td, fontFamily: 'monospace' }}>{r.inc_60_330?.toFixed(4) ?? '—'}</td>;
@@ -2228,36 +2318,30 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
         </div>
       )}
 
-      {/* Pagination controls */}
+      {/* ── Pagination ── */}
       {selectedDriver && total > 0 && !loading && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '0.5rem', marginTop: '0.5rem', fontSize: '0.75rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-            <button
-              style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
+            <button style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
               disabled={currentOffset === 0}
-              onClick={() => setCurrentOffset(o => Math.max(0, o - pageSize))}
-            >
+              onClick={() => setCurrentOffset(o => Math.max(0, o - pageSize))}>
               ← Prev
             </button>
             <span style={{ color: 'var(--color-muted)' }}>
               {currentOffset + 1}–{Math.min(currentOffset + pageSize, total)} of {total}
             </span>
-            <button
-              style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
+            <button style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.5rem' }}
               disabled={currentOffset + pageSize >= total}
-              onClick={() => setCurrentOffset(o => o + pageSize)}
-            >
+              onClick={() => setCurrentOffset(o => o + pageSize)}>
               Next →
             </button>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
             <span style={{ color: 'var(--color-muted)' }}>Per page:</span>
             {PAGE_SIZES.map(sz => (
-              <button
-                key={sz}
+              <button key={sz}
                 style={{ ...S.btn(pageSize === sz ? 'primary' : 'secondary'), fontSize: '0.65rem', padding: '0.1rem 0.35rem' }}
-                onClick={() => setPageSize(sz)}
-              >
+                onClick={() => setPageSize(sz)}>
                 {sz}
               </button>
             ))}
@@ -2266,7 +2350,7 @@ function DriverDrilldownPanel({ initialFilter }: { initialFilter?: { driver?: st
       )}
 
       {selectedDriver && !loading && runs.length === 0 && (
-        <div style={S.hint}>No runs found for {selectedDriver}{classFilter ? ` in class ${classFilter}` : ''}{sessionFilter ? ` (${sessionFilter})` : ''}.</div>
+        <div style={S.hint}>No runs found for {selectedDriver}{categoryFilter ? ` in ${categoryFilter}` : ''}.</div>
       )}
 
       {!selectedDriver && !loading && (
@@ -2678,6 +2762,16 @@ function EngineCombosPanel() {
             ))}
           </tbody>
         </table>
+      )}
+
+      {/* Combo Tuner Panel - Feature gated */}
+      {useFeature('combo_tuner') && (
+        <details className="combo-tuner-details" style={{ marginTop: '2rem' }}>
+          <summary style={{ cursor: 'pointer', fontSize: '0.9rem', fontWeight: 600, color: 'var(--color-text, #e0e0e0)', padding: '0.5rem 0' }}>
+            Combo Tuner (Tune Parameters)
+          </summary>
+          <ComboTunerPanel engineCombos={combos} />
+        </details>
       )}
     </div>
   );
