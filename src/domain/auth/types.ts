@@ -187,7 +187,7 @@ export const DEFAULT_ROLES: Role[] = [
     description: 'Administrative access — can manage users within this account and access plan features',
     color: '#dc2626',
     products: ['quarter_jr', 'quarter_pro', 'bonneville_pro', 'engine_pro', 'fourlink', 'cam_analyzer'],
-    additionalFeatures: ['dev_tools', 'user_management', 'view_analytics', 'beta_features'],
+    additionalFeatures: ['dev_tools', 'user_management', 'view_analytics', 'beta_features', 'combo_tuner'],
     canManageRoles: false,
     canManageUsers: true,
     isSystem: true,
