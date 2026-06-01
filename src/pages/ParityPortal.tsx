@@ -105,7 +105,7 @@ import IncidentDrawer from './IncidentDrawer';
 import IncidentCell from '../shared/components/IncidentCell';
 import { useAutoRefresh, isEventOngoing } from '../domain/parity/useAutoRefresh';
 import { divApi, DIV_CODES, type DivEventRow, type DivIngestResult, type DivSuggestResponse } from '../services/divApi';
-import RunProfilerPanel from './RunProfilerPanel';
+// import RunProfilerPanel from './RunProfilerPanel'; // TODO: Restore after committing RunProfilerPanel
 
 // ── Styles ──────────────────────────────────────────────────────────────
 
@@ -828,7 +828,7 @@ export default function ParityPortal() {
       {tab === 'bodyStyleDefs' && <BodyStyleDefsPanel />}
       {tab === 'driverBodyStyles' && <DriverBodyStylesPanel />}
       {tab === 'divAdmin' && <DivAdminPanel />}
-      {tab === 'runProfiler' && <RunProfilerPanel event={selectedEvent} category={category} />}
+      {tab === 'runProfiler' && <div>Run Profiler - Coming Soon</div>}
     </div>
   );
 }
