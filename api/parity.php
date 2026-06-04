@@ -13852,6 +13852,8 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
     $rlPlaceholders = implode(',', array_fill(0, count($raceLookups), '?'));
 
     // ── 2. Fetch all runs for these events in this category ──────────────────
+    // Note: include DQ runs so drivers who attempted but DNQ'd still appear;
+    // dq_flag is respected per-run when computing qual positions.
     $runParams = array_merge($raceLookups, [strtoupper($category)]);
     $runStmt = $pdo->prepare("
         SELECT r.race_lookup, r.driver_name, r.car_number, r.round, r.lane,
@@ -13860,13 +13862,13 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
         FROM parity_runs r
         WHERE r.race_lookup IN ($rlPlaceholders)
           AND UPPER(r.category) = ?
-          AND r.dq_flag = 0
         ORDER BY r.race_lookup, r.driver_name, r.round, r.run_timestamp_utc
     ");
     $runStmt->execute($runParams);
     $allRuns = $runStmt->fetchAll(PDO::FETCH_ASSOC);
 
-    // Cast types
+    // Cast types; remove runs with no driver name
+    $allRuns = array_values(array_filter($allRuns, fn($r) => !empty($r['driver_name'])));
     foreach ($allRuns as &$r) {
         $r['ft1320']   = $r['ft1320']   !== null ? (float)$r['ft1320']   : null;
         $r['mph1320']  = $r['mph1320']  !== null ? (float)$r['mph1320']  : null;
@@ -13914,6 +13916,39 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
         return null;
     };
 
+    // ── 3b. Pre-compute qualifying positions per event ─────────────────────────
+    // The `place` field is unreliable (often 0). Compute qual positions by
+    // ranking drivers by their best valid (non-DQ, has ET) qualifying run per event.
+    // Result: $qualPosByEvent[$race_lookup][$driver_name] = int position (1-based)
+    $qualPosByEvent = [];
+    $qualBestByEvent = []; // [race_lookup][driver_name] = best_et
+    foreach ($allRuns as $r) {
+        if (!preg_match('/^Q/i', $r['round'] ?? '')) continue;
+        if ($r['dq_flag']) continue;
+        $et = $r['ft1320'];
+        if ($et === null || $et <= 0) continue;
+        $rl  = $r['race_lookup'];
+        $dn  = $r['driver_name'];
+        if (!isset($qualBestByEvent[$rl][$dn]) || $et < $qualBestByEvent[$rl][$dn]) {
+            $qualBestByEvent[$rl][$dn] = $et;
+        }
+    }
+    foreach ($qualBestByEvent as $rl => $driverBests) {
+        asort($driverBests); // sort by ET ascending
+        $pos = 1;
+        foreach ($driverBests as $dn => $et) {
+            $qualPosByEvent[$rl][$dn] = $pos++;
+        }
+    }
+
+    // Track which drivers had qual-round runs per event (for DNQ detection)
+    $hadQualRun = []; // [race_lookup][driver_name] = true
+    foreach ($allRuns as $r) {
+        if (preg_match('/^Q/i', $r['round'] ?? '')) {
+            $hadQualRun[$r['race_lookup']][$r['driver_name']] = true;
+        }
+    }
+
     // ── 4. Determine round ordering per event ────────────────────────────────
     // Group rounds into qual (starts with Q) and elim (everything else).
     // For elim rounds, sort by round name to find final and semi-final.
@@ -13928,17 +13963,27 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
         if ($rnd !== '') $roundsByEvent[$rl][$rnd] = true;
     }
 
-    // Returns ['final' => string|null, 'semi' => string|null] for a set of elim rounds
+    // Returns ['final' => string|null, 'semi' => string|null] for a set of elim rounds.
+    // NHRA round names: R1..R4 (R1=final in 16-car), E1..E4, SF, F, Finals, Semis.
+    // Strategy: assign a "lateness" score — higher = later in bracket = closer to final.
     $classifyElimRounds = function(array $elimRounds): array {
         if (empty($elimRounds)) return ['final' => null, 'semi' => null];
-        // Sort: rounds with lower number = later in bracket (R1 is final in 16-car)
-        usort($elimRounds, function($a, $b) {
-            preg_match('/(\d+)/', $a, $ma);
-            preg_match('/(\d+)/', $b, $mb);
-            $na = isset($ma[1]) ? (int)$ma[1] : 999;
-            $nb = isset($mb[1]) ? (int)$mb[1] : 999;
-            return $na <=> $nb; // ascending: R1 first = final
-        });
+
+        $score = function(string $rnd): int {
+            $u = strtoupper(trim($rnd));
+            // Explicit named rounds
+            if ($u === 'F' || $u === 'FINAL' || $u === 'FINALS') return 1000;
+            if ($u === 'SF' || $u === 'SEMI' || $u === 'SEMIS' || $u === 'SEMIFINAL' || $u === 'SEMIFINALS') return 900;
+            // R-prefixed: lower number = later (R1 = final in 16-car ladder)
+            if (preg_match('/^R(\d+)$/i', $u, $m)) return 500 - (int)$m[1];
+            // E-prefixed: higher number = later
+            if (preg_match('/^E(\d+)$/i', $u, $m)) return 100 + (int)$m[1];
+            // Numeric only
+            if (preg_match('/^(\d+)$/', $u, $m)) return (int)$m[1];
+            return 0;
+        };
+
+        usort($elimRounds, fn($a, $b) => $score($b) - $score($a)); // descending: final first
         $final = $elimRounds[0] ?? null;
         $semi  = $elimRounds[1] ?? null;
         return ['final' => $final, 'semi' => $semi];
@@ -13982,12 +14027,9 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
         $entry  = &$driverEventData[$key][$rl];
 
         if ($isQual) {
-            // Track best (lowest numeric) qualifying position
-            $pos = $r['place'] !== null && $r['place'] !== '' ? (int)$r['place'] : null;
-            if ($pos !== null && $pos > 0) {
-                if ($entry['qual_pos'] === null || $pos < $entry['qual_pos']) {
-                    $entry['qual_pos'] = $pos;
-                }
+            // Qual position is pre-computed from ET ranking; set it once
+            if ($entry['qual_pos'] === null && isset($qualPosByEvent[$rl][$driverName])) {
+                $entry['qual_pos'] = $qualPosByEvent[$rl][$driverName];
             }
         } else {
             // Elimination round: classify result
@@ -14009,21 +14051,14 @@ function handleSeasonCategoryHistory(PDO $pdo): void {
         unset($entry);
     }
 
-    // Mark DNQ: driver has qual runs but no valid place ≤ 16
+    // Mark DNQ: driver had qual runs but didn't make the field (no ET-based qual_pos)
     foreach ($driverEventData as $key => &$evMap) {
+        $driverName = $driverMeta[$key]['driver_name'];
         foreach ($evMap as $rl => &$entry) {
             if ($entry['qual_pos'] === null && $entry['result'] === null) {
-                // Check if they even had qual runs
-                $hasQualRuns = false;
-                foreach ($allRuns as $r) {
-                    if ($r['race_lookup'] === $rl && ($r['driver_name'] . '|||' . ($resolveCombo($r['driver_name'], $r['run_timestamp_utc']) ?? '')) === $key) {
-                        if (preg_match('/^Q/i', $r['round'] ?? '')) {
-                            $hasQualRuns = true;
-                            break;
-                        }
-                    }
+                if (!empty($hadQualRun[$rl][$driverName])) {
+                    $entry['result'] = 'dnq';
                 }
-                if ($hasQualRuns) $entry['result'] = 'dnq';
             }
         }
         unset($entry);
