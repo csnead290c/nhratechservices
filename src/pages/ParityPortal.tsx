@@ -71,6 +71,10 @@ import {
   type RtRun,
   type RtDriverStat,
   type RtHoleshot,
+  type SeasonCategoryHistoryResponse,
+  type SeasonHistoryDriver,
+  type SeasonHistoryEventMeta,
+  type SeasonHistoryEventStats,
 } from '../services/parityApi';
 import {
   formatET, formatMPH, formatBaro,
@@ -105,7 +109,7 @@ import IncidentDrawer from './IncidentDrawer';
 import IncidentCell from '../shared/components/IncidentCell';
 import { useAutoRefresh, isEventOngoing } from '../domain/parity/useAutoRefresh';
 import { divApi, DIV_CODES, type DivEventRow, type DivIngestResult, type DivSuggestResponse } from '../services/divApi';
-// import RunProfilerPanel from './RunProfilerPanel'; // TODO: Restore after committing RunProfilerPanel
+// import RunProfilerPanel from './RunProfilerPanel';
 
 // ── Styles ──────────────────────────────────────────────────────────────
 
@@ -260,7 +264,7 @@ const S = {
 } as const;
 
 type Tab = 'eventRuns' | 'qualSheet' | 'driverHistory' | 'rtAnalysis' | 'trends' | 'weatherDash' | 'parityDash' | 'parityReport'
-  | 'liveTiming' | 'anomalies' | 'incrementalComparison'
+  | 'liveTiming' | 'anomalies' | 'incrementalComparison' | 'categoryHistory'
   | 'parity' | 'ladder' | 'peek' | 'ingest' | 'query' | 'imports' | 'weather' | 'runsWeather' | 'backfill'
   | 'adminTracks' | 'adminEvents' | 'classAliases' | 'engineCombos' | 'driverCombos' | 'assignCombos'
   | 'weatherCorrection' | 'backfillWeather' | 'weatherHealth' | 'importStationCsv'
@@ -274,6 +278,7 @@ const DASHBOARD_TABS: { key: Tab; label: string }[] = [
   { key: 'eventRuns', label: 'Event Runs' },
   { key: 'liveTiming', label: 'Live Timing' },
   { key: 'driverHistory', label: 'Driver History' },
+  { key: 'categoryHistory', label: 'Season History' },
   { key: 'rtAnalysis', label: 'Reaction Times' },
   { key: 'weatherDash', label: 'Weather' },
   { key: 'parityReport', label: 'Parity Report' },
@@ -794,6 +799,7 @@ export default function ParityPortal() {
       {tab === 'liveTiming' && <LiveTimingPanel event={selectedEvent} refreshKey={refreshKey} onDriverClick={goToDriverHistory} division={selectedDivision} />}
       {tab === 'qualSheet' && <QualSheetPanel event={selectedEvent} classIndex={classIndex} onDriverClick={goToDriverHistory} division={selectedDivision} />}
       {tab === 'driverHistory' && <DriverDrilldownPanel initialFilter={driverHistoryFilter} />}
+      {tab === 'categoryHistory' && <CategoryHistoryPanel year={selectedYear} category={category} onDriverClick={goToDriverHistory} />}
       {tab === 'rtAnalysis' && <RtAnalysisPanel event={selectedEvent} category={category} division={selectedDivision} />}
       {tab === 'trends' && <TrendsPanel />}
       {tab === 'weatherDash' && <WeatherDashPanel event={selectedEvent} category={category} division={selectedDivision} />}
@@ -7551,6 +7557,259 @@ interface DerivedPoint {
 /** Centralized weather metric formatters for consistent axis ticks, tooltips, and readouts */
 // ────────────────────────────────────────────────────────────────────────────
 // RtAnalysisPanel
+// ────────────────────────────────────────────────────────────────────────────
+
+// ── Category History Panel ────────────────────────────────────────────────
+
+const RESULT_COLORS: Record<string, { bg: string; text: string; label: string }> = {
+  win:       { bg: '#16a34a', text: '#fff',    label: 'Winner'    },
+  runner_up: { bg: '#eab308', text: '#000',    label: 'Runner Up' },
+  semi:      { bg: '#3b82f6', text: '#fff',    label: 'Semi'      },
+  dnq:       { bg: '#9ca3af', text: '#1f2937', label: 'DNQ'       },
+};
+
+function CategoryHistoryPanel({
+  year,
+  category,
+  onDriverClick,
+}: {
+  year: number;
+  category: string;
+  onDriverClick?: (driver: string, classIndex?: string) => void;
+}) {
+  const [data, setData] = useState<SeasonCategoryHistoryResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [showCombos, setShowCombos] = useState(true);
+
+  const load = useCallback(async () => {
+    if (!year || !category) return;
+    setLoading(true); setError('');
+    try {
+      const res = await parityApi.seasonCategoryHistory({ seasonYear: year, category });
+      setData(res);
+    } catch (e: any) { setError(e.message ?? 'Failed to load'); }
+    setLoading(false);
+  }, [year, category]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const exportCsv = useCallback(() => {
+    if (!data || !data.drivers.length) return;
+    const evCodes = data.events.map(ev => ev.event_code || ev.race_lookup.slice(0, 6));
+    const hdr = ['Pos', 'Car#', 'Driver', 'Combo', ...evCodes, 'Events', 'Wins', 'R/U', '#1s', 'DNQ', 'Best Q'];
+    const rows = data.drivers.map((d, i) => [
+      String(i + 1),
+      d.car_number ?? '',
+      d.driver_name,
+      d.combo_name ?? '',
+      ...data.events.map(ev => {
+        const entry = d.event_results[ev.race_lookup];
+        if (!entry) return '';
+        return entry.qual_pos != null ? String(entry.qual_pos) : (entry.result ?? '');
+      }),
+      String(d.events_entered),
+      String(d.wins),
+      String(d.runner_ups),
+      String(d.no1_quals),
+      String(d.dnqs),
+      d.best_qual != null ? String(d.best_qual) : '',
+    ]);
+    const csv = [hdr, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `season-history-${year}-${category.replace(/\s+/g, '_')}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+  }, [data, year, category]);
+
+  if (loading) return <div style={S.hint}>Loading season history…</div>;
+  if (error)   return <div style={S.error}>{error}</div>;
+  if (!data)   return <div style={S.hint}>Select a year and category above.</div>;
+  if (!data.events.length) return <div style={S.hint}>No events found for {category} in {year}.</div>;
+
+  const events = data.events;
+  const drivers = showCombos ? data.drivers : (() => {
+    // Collapse multi-combo rows: keep the one with most events
+    const seen = new Map<string, SeasonHistoryDriver>();
+    for (const d of data.drivers) {
+      const existing = seen.get(d.driver_name);
+      if (!existing || d.events_entered > existing.events_entered) seen.set(d.driver_name, d);
+    }
+    return [...seen.values()];
+  })();
+
+  const hasAnyCombos = data.drivers.some(d => d.combo_name != null);
+
+  const stickyLeft: React.CSSProperties = {
+    position: 'sticky', left: 0, zIndex: 2,
+    background: 'var(--color-surface, #1e1e2e)',
+  };
+
+  const cellStyle = (result: string | null | undefined): React.CSSProperties => {
+    if (!result || !RESULT_COLORS[result]) return { ...S.td, textAlign: 'center', fontSize: '0.72rem' };
+    const c = RESULT_COLORS[result];
+    return { ...S.td, textAlign: 'center', fontSize: '0.72rem', background: c.bg, color: c.text, fontWeight: 700 };
+  };
+
+  return (
+    <div>
+      {/* ── Toolbar ── */}
+      <div className="parity-form-row" style={{ marginBottom: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <span style={{ fontWeight: 700, fontSize: '0.9rem' }}>{year} {category} — Season Standings</span>
+        <span style={{ color: 'var(--color-muted)', fontSize: '0.75rem', marginLeft: 8 }}>
+          {data.drivers.length} entries · {events.length} events
+        </span>
+        {hasAnyCombos && (
+          <label style={{ fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+            <input type="checkbox" checked={showCombos} onChange={e => setShowCombos(e.target.checked)} />
+            Split by combo
+          </label>
+        )}
+        <button
+          style={{ ...S.btn('secondary'), fontSize: '0.7rem', padding: '0.15rem 0.4rem', marginLeft: 'auto' }}
+          onClick={exportCsv}
+        >
+          Export CSV
+        </button>
+      </div>
+
+      {/* ── Legend ── */}
+      <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.5rem', fontSize: '0.7rem' }}>
+        {Object.entries(RESULT_COLORS).map(([key, c]) => (
+          <span key={key} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <span style={{ width: 12, height: 12, background: c.bg, border: '1px solid rgba(255,255,255,0.15)', borderRadius: 2, display: 'inline-block' }} />
+            {c.label}
+          </span>
+        ))}
+        <span style={{ color: 'var(--color-muted)' }}>· Number in cell = qualifying position</span>
+      </div>
+
+      {/* ── Main grid ── */}
+      <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: 600 }}>
+        <table style={{ ...S.table, borderCollapse: 'separate', borderSpacing: 0, minWidth: 800 }}>
+          <thead>
+            <tr>
+              <th style={{ ...S.th, ...stickyLeft, minWidth: 28, top: 0, zIndex: 3 }}>Pos</th>
+              <th style={{ ...S.th, ...stickyLeft, minWidth: 40, left: 28, top: 0, zIndex: 3 }}>Car#</th>
+              <th style={{ ...S.th, ...stickyLeft, minWidth: 160, left: 68, top: 0, zIndex: 3, borderRight: '2px solid var(--color-border)' }}>
+                Driver{hasAnyCombos && showCombos ? ' / Combo' : ''}
+              </th>
+              {events.map(ev => (
+                <th key={ev.race_lookup} style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 36, textAlign: 'center', fontSize: '0.65rem', whiteSpace: 'nowrap' }}
+                  title={ev.event_name + ' — ' + ev.start_date_local}>
+                  {ev.event_code || ev.race_lookup.slice(4, 8)}
+                </th>
+              ))}
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 40, textAlign: 'center', borderLeft: '2px solid var(--color-border)' }}>Ev</th>
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 36, textAlign: 'center' }}>W</th>
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 36, textAlign: 'center' }}>R/U</th>
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 36, textAlign: 'center' }}>#1</th>
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 36, textAlign: 'center' }}>DNQ</th>
+              <th style={{ ...S.th, position: 'sticky', top: 0, zIndex: 1, minWidth: 44, textAlign: 'center' }}>Best Q</th>
+            </tr>
+          </thead>
+          <tbody>
+            {drivers.map((d, i) => (
+              <tr key={d.driver_name + '|||' + (d.combo_name ?? '')}
+                style={{ background: i % 2 === 1 ? 'var(--color-bg, #262636)' : undefined }}>
+                <td style={{ ...S.td, ...stickyLeft, textAlign: 'center', fontWeight: 600, fontSize: '0.75rem', background: i % 2 === 1 ? 'var(--color-bg, #262636)' : 'var(--color-surface, #1e1e2e)' }}>
+                  {i + 1}
+                </td>
+                <td style={{ ...S.td, ...stickyLeft, left: 28, textAlign: 'center', fontSize: '0.72rem', background: i % 2 === 1 ? 'var(--color-bg, #262636)' : 'var(--color-surface, #1e1e2e)' }}>
+                  {d.car_number ?? '—'}
+                </td>
+                <td style={{ ...S.td, ...stickyLeft, left: 68, borderRight: '2px solid var(--color-border)', maxWidth: 200, background: i % 2 === 1 ? 'var(--color-bg, #262636)' : 'var(--color-surface, #1e1e2e)' }}>
+                  <span
+                    style={{ cursor: onDriverClick ? 'pointer' : undefined, color: onDriverClick ? 'var(--color-primary, #3b82f6)' : undefined, fontWeight: 600, fontSize: '0.78rem' }}
+                    onClick={() => onDriverClick?.(d.driver_name)}
+                    title={onDriverClick ? `View ${d.driver_name} history` : undefined}
+                  >
+                    {d.driver_name}
+                  </span>
+                  {d.combo_name && showCombos && (
+                    <div style={{ fontSize: '0.62rem', color: 'var(--color-muted)', marginTop: 1 }}>{d.combo_name}</div>
+                  )}
+                </td>
+                {events.map(ev => {
+                  const entry = d.event_results[ev.race_lookup];
+                  if (!entry) return (
+                    <td key={ev.race_lookup} style={{ ...S.td, textAlign: 'center', color: 'var(--color-muted)', fontSize: '0.65rem' }}>—</td>
+                  );
+                  const cs = cellStyle(entry.result);
+                  return (
+                    <td key={ev.race_lookup} style={cs} title={entry.result ? RESULT_COLORS[entry.result]?.label : undefined}>
+                      {entry.qual_pos ?? (entry.result === 'dnq' ? 'DNQ' : '')}
+                    </td>
+                  );
+                })}
+                <td style={{ ...S.td, textAlign: 'center', fontWeight: 600, borderLeft: '2px solid var(--color-border)' }}>{d.events_entered}</td>
+                <td style={{ ...S.td, textAlign: 'center', color: d.wins > 0 ? '#16a34a' : undefined, fontWeight: d.wins > 0 ? 700 : undefined }}>{d.wins}</td>
+                <td style={{ ...S.td, textAlign: 'center', color: d.runner_ups > 0 ? '#eab308' : undefined }}>{d.runner_ups}</td>
+                <td style={{ ...S.td, textAlign: 'center' }}>{d.no1_quals}</td>
+                <td style={{ ...S.td, textAlign: 'center', color: d.dnqs > 0 ? '#9ca3af' : undefined }}>{d.dnqs || ''}</td>
+                <td style={{ ...S.td, textAlign: 'center', fontWeight: d.best_qual === 1 ? 700 : undefined }}>{d.best_qual ?? '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ── Footer stats ── */}
+      {(() => {
+        const statRows: { label: string; field: 'racer_count' | 'low_et_qual' | 'top_speed_qual' | 'low_et_elim' | 'top_speed_elim' }[] = [
+          { label: 'Racers',           field: 'racer_count'    },
+          { label: 'Low ET (Qual)',    field: 'low_et_qual'    },
+          { label: 'Top Speed (Qual)', field: 'top_speed_qual' },
+          { label: 'Low ET (Elim)',    field: 'low_et_elim'    },
+          { label: 'Top Speed (Elim)', field: 'top_speed_elim' },
+        ];
+        return (
+          <div style={{ overflowX: 'auto', marginTop: '0.75rem' }}>
+            <table style={{ ...S.table, borderCollapse: 'separate', borderSpacing: 0, minWidth: 800, fontSize: '0.7rem' }}>
+              <tbody>
+                {statRows.map(({ label, field }) => (
+                  <tr key={field}>
+                    <td style={{ ...S.td, fontWeight: 700, minWidth: 130, whiteSpace: 'nowrap', position: 'sticky', left: 0, background: 'var(--color-surface, #1e1e2e)', zIndex: 1 }}>
+                      {label}
+                    </td>
+                    {/* Spacers for Car# and Driver columns */}
+                    <td style={S.td} />
+                    <td style={{ ...S.td, borderRight: '2px solid var(--color-border)' }} />
+                    {events.map(ev => {
+                      const stats: SeasonHistoryEventStats | undefined = data.event_stats[ev.race_lookup];
+                      if (!stats) return <td key={ev.race_lookup} style={{ ...S.td, textAlign: 'center' }}>—</td>;
+                      let cell: string = '—';
+                      if (field === 'racer_count') {
+                        cell = String(stats.racer_count);
+                      } else if (field === 'low_et_qual' && stats.low_et_qual) {
+                        cell = formatET(stats.low_et_qual.ft1320);
+                      } else if (field === 'top_speed_qual' && stats.top_speed_qual) {
+                        cell = formatMPH(stats.top_speed_qual.mph1320);
+                      } else if (field === 'low_et_elim' && stats.low_et_elim) {
+                        cell = formatET(stats.low_et_elim.ft1320);
+                      } else if (field === 'top_speed_elim' && stats.top_speed_elim) {
+                        cell = formatMPH(stats.top_speed_elim.mph1320);
+                      }
+                      return (
+                        <td key={ev.race_lookup} style={{ ...S.td, textAlign: 'center', whiteSpace: 'nowrap' }}>
+                          {cell}
+                        </td>
+                      );
+                    })}
+                    {/* Spacers for summary columns */}
+                    {[0,1,2,3,4,5].map(n => <td key={n} style={S.td} />)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+    </div>
+  );
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 
 const RADAR_COLORS = ['#2563eb','#16a34a','#dc2626','#9333ea','#f97316','#0891b2','#ca8a04','#db2777'];

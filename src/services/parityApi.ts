@@ -3280,6 +3280,7 @@ export const parityApi = {
     minEventsPerCombo: number;
     minCombosPerEvent: number;
     anchorComboId?: number;
+    targetComboId?: number;
     lockTPower?: boolean;
     lockDPower?: boolean;
     lockFF?: boolean;
@@ -3293,6 +3294,7 @@ export const parityApi = {
     qs.set('minCombosPerEvent', String(params.minCombosPerEvent));
     if (params.customEventCount) qs.set('customEventCount', String(params.customEventCount));
     if (params.anchorComboId) qs.set('anchorComboId', String(params.anchorComboId));
+    if (params.targetComboId) qs.set('targetComboId', String(params.targetComboId));
     if (params.lockTPower) qs.set('lockTPower', '1');
     if (params.lockDPower) qs.set('lockDPower', '1');
     if (params.lockFF) qs.set('lockFF', '1');
@@ -3307,6 +3309,7 @@ export const parityApi = {
     minEventsPerCombo: number;
     minCombosPerEvent: number;
     anchorComboId?: number;
+    targetComboId?: number;
     lockTPower?: boolean;
     lockDPower?: boolean;
     lockFF?: boolean;
@@ -3320,10 +3323,40 @@ export const parityApi = {
     qs.set('minCombosPerEvent', String(params.minCombosPerEvent));
     if (params.customEventCount) qs.set('customEventCount', String(params.customEventCount));
     if (params.anchorComboId) qs.set('anchorComboId', String(params.anchorComboId));
+    if (params.targetComboId) qs.set('targetComboId', String(params.targetComboId));
     if (params.lockTPower) qs.set('lockTPower', '1');
     if (params.lockDPower) qs.set('lockDPower', '1');
     if (params.lockFF) qs.set('lockFF', '1');
     return parityRequest<ComboTunerRecommendResponse>(`/combo-tuner.php?${qs.toString()}`);
+  },
+
+  async seasonCategoryHistory(params: { seasonYear: number; category: string }): Promise<SeasonCategoryHistoryResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'seasonCategoryHistory');
+    qs.set('seasonYear', String(params.seasonYear));
+    qs.set('category', params.category);
+    return parityRequest<SeasonCategoryHistoryResponse>(`/parity.php?${qs.toString()}`);
+  },
+
+  async comboTunerEvaluate(params: {
+    category: string;
+    eventWindow: 'previous20' | 'currentSeason' | 'custom';
+    customEventCount?: number;
+    metric: 'quickest' | 'avg2' | 'avg4';
+    minEventsPerCombo: number;
+    minCombosPerEvent: number;
+    overrides: ComboTunerOverrides;
+  }): Promise<ComboTunerEvaluateResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'comboTunerEvaluate');
+    qs.set('category', params.category);
+    qs.set('eventWindow', params.eventWindow);
+    qs.set('metric', params.metric);
+    qs.set('minEventsPerCombo', String(params.minEventsPerCombo));
+    qs.set('minCombosPerEvent', String(params.minCombosPerEvent));
+    if (params.customEventCount) qs.set('customEventCount', String(params.customEventCount));
+    qs.set('overrides', JSON.stringify(params.overrides));
+    return parityRequest<ComboTunerEvaluateResponse>(`/combo-tuner.php?${qs.toString()}`);
   },
 };
 
@@ -3337,6 +3370,17 @@ export interface ComboTunerComboEntry {
   currentFF: number;
   eventCount: number;
   avgResidual: number;
+  residualStdDev: number;
+}
+
+export interface ComboTunerCoverage {
+  runsTotal: number;
+  runsResolved: number;
+  runsWithWeather: number;
+  runsUsable: number;
+  resolvedPct: number;
+  weatherPct: number;
+  usablePct: number;
 }
 
 export interface ComboTunerStats {
@@ -3348,18 +3392,22 @@ export interface ComboTunerStats {
 export interface ComboTunerAnalyzeResponse {
   eventsUsed: number;
   runsUsed: number;
+  targetComboId?: number | null;
   combosIncluded: ComboTunerComboEntry[];
   currentStats: ComboTunerStats;
+  coverage?: ComboTunerCoverage;
   excluded?: {
-    events?: Array<{ eventId: number; reason: string }>;
-    runs?: Array<{ runId: number; reason: string }>;
-    combos?: Array<{ comboId: number; comboName: string; reason: string }>;
+    combos?: Array<{ comboId: number; comboName: string; reason: string; eventCount?: number }>;
   };
 }
 
 export interface ComboTunerRecommendation {
   comboId: number;
   comboName: string;
+  tuned: boolean;
+  currentTPower: number;
+  currentDPower: number;
+  currentFF: number;
   proposedTPower: number;
   proposedDPower: number;
   proposedFF: number;
@@ -3368,16 +3416,99 @@ export interface ComboTunerRecommendation {
   deltaFF: number;
   avgResidualBefore: number;
   avgResidualAfter: number;
+  hitBound?: { t_power?: boolean; d_power?: boolean; ff?: boolean } | null;
 }
 
 export interface ComboTunerSearchMetadata {
-  coarseIterations: number;
-  fineIterations: number;
+  iterations: number;
   bestScoreFound: number;
 }
 
+export type ComboTunerSeriesPoint = {
+  event: string;
+  date: string | null;
+  [comboName: string]: number | string | null;
+};
+
 export interface ComboTunerRecommendResponse extends ComboTunerAnalyzeResponse {
+  mode: 'target' | 'relative';
   proposedStats: ComboTunerStats;
   recommendations: ComboTunerRecommendation[];
   searchMetadata: ComboTunerSearchMetadata;
+  comboLabels: string[];
+  seriesCurrent: ComboTunerSeriesPoint[];
+  seriesProposed: ComboTunerSeriesPoint[];
+}
+
+export interface ComboTunerEvalComboEntry {
+  comboId: number;
+  comboName: string;
+  currentTPower: number;
+  currentDPower: number;
+  currentFF: number;
+  evalTPower: number;
+  evalDPower: number;
+  evalFF: number;
+  avgResidualBefore: number;
+  avgResidualAfter: number;
+  residualStdAfter: number;
+}
+
+export interface ComboTunerEvaluateResponse {
+  eventsUsed: number;
+  runsUsed: number;
+  combos: ComboTunerEvalComboEntry[];
+  currentStats: ComboTunerStats;
+  evalStats: ComboTunerStats;
+  comboLabels: string[];
+  seriesCurrent: ComboTunerSeriesPoint[];
+  seriesProposed: ComboTunerSeriesPoint[];
+}
+
+export type ComboTunerOverrides = Record<number, { t: number; d: number; ff: number }>;
+
+// ── Season Category History ─────────────────────────────────────────────
+
+export interface SeasonHistoryEventMeta {
+  race_lookup: string;
+  event_name: string;
+  event_code: string | null;
+  start_date_local: string;
+}
+
+export type SeasonHistoryResult = 'win' | 'runner_up' | 'semi' | 'dnq' | null;
+
+export interface SeasonHistoryEventEntry {
+  qual_pos: number | null;
+  result: SeasonHistoryResult;
+  car_number: string | null;
+}
+
+export interface SeasonHistoryDriver {
+  driver_name: string;
+  car_number: string | null;
+  combo_name: string | null;
+  events_entered: number;
+  wins: number;
+  runner_ups: number;
+  no1_quals: number;
+  dnqs: number;
+  best_qual: number | null;
+  event_results: Record<string, SeasonHistoryEventEntry>;
+}
+
+export interface SeasonHistoryEventStats {
+  racer_count: number;
+  low_et_qual:    { driver: string; ft1320: number }  | null;
+  top_speed_qual: { driver: string; mph1320: number } | null;
+  low_et_elim:    { driver: string; ft1320: number }  | null;
+  top_speed_elim: { driver: string; mph1320: number } | null;
+}
+
+export interface SeasonCategoryHistoryResponse {
+  season_year: number;
+  category: string;
+  events: SeasonHistoryEventMeta[];
+  drivers: SeasonHistoryDriver[];
+  event_stats: Record<string, SeasonHistoryEventStats>;
 }

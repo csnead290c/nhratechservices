@@ -519,6 +519,10 @@ switch ($action) {
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleRtAnalysis($pdo);
         break;
+    case 'seasonCategoryHistory':
+        if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleSeasonCategoryHistory($pdo);
+        break;
     default:
         rsa_jsonResponse(['error' => 'Invalid action'], 400);
 }
@@ -8146,6 +8150,7 @@ function handleWeatherTimeseries(PDO $pdo): void {
 function handleParityByCombo(PDO $pdo): void {
     $eventId = (int)($_GET['eventId'] ?? 0);
     $classIndex = trim($_GET['classIndex'] ?? '');
+    $category = trim($_GET['category'] ?? '');
     $metric = trim($_GET['metric'] ?? 'et_1320');
     $mode = trim($_GET['mode'] ?? 'raw');
     $topN = max(1, min(20, (int)($_GET['topN'] ?? 4)));
@@ -8154,7 +8159,7 @@ function handleParityByCombo(PDO $pdo): void {
     $includeUnknown = (bool)($_GET['includeUnknown'] ?? false);
 
     if ($eventId <= 0) rsa_jsonResponse(['error' => 'eventId is required'], 400);
-    if ($classIndex === '') rsa_jsonResponse(['error' => 'classIndex is required'], 400);
+    if ($classIndex === '' && $category === '') rsa_jsonResponse(['error' => 'classIndex or category is required'], 400);
 
     $validMetrics = ['et_1320', 'mph_1320', 'rt', 't60', 't330', 't660', 'mph_660', 't1000', 'mph_1000'];
     if (!in_array($metric, $validMetrics)) {
@@ -8190,8 +8195,9 @@ function handleParityByCombo(PDO $pdo): void {
     $raceLookup = $event['race_lookup'];
     if (!$raceLookup) rsa_jsonResponse(['error' => 'Event has no race_lookup'], 400);
 
-    // ── Expand class, load combo lookups ────────────────────────────────
-    $classIndices = parity_expandClassIndex($pdo, $classIndex);
+    // ── Expand class or use category, load combo lookups ───────────────
+    $useCategory = ($category !== '');
+    $classIndices = $useCategory ? [] : parity_expandClassIndex($pdo, $classIndex);
     $classPlaceholders = implode(',', array_fill(0, count($classIndices), '?'));
 
     $engineCombos = [];
@@ -8220,7 +8226,13 @@ function handleParityByCombo(PDO $pdo): void {
     elseif ($sessionScope === 'elim')  $sessionFilter = " AND r.round NOT LIKE 'Q%'";
 
     // ── Fetch runs ──────────────────────────────────────────────────────
-    $params = array_merge([$raceLookup], $classIndices);
+    if ($useCategory) {
+        $params = [$raceLookup, $category];
+        $classFilter = "r.category = ?";
+    } else {
+        $params = array_merge([$raceLookup], $classIndices);
+        $classFilter = "r.class_index IN ($classPlaceholders)";
+    }
     $runStmt = $pdo->prepare("
         SELECT r.id, r.uuid, r.run_timestamp_utc, r.driver_name, r.class_index,
                r.round, r.lane, r.car_number, r.rt,
@@ -8228,7 +8240,7 @@ function handleParityByCombo(PDO $pdo): void {
                COALESCE(r.dq_flag, 0) AS dq_flag
         FROM parity_runs r
         WHERE r.race_lookup = ?
-          AND r.class_index IN ($classPlaceholders)
+          AND $classFilter
           AND COALESCE(r.dq_flag, 0) = 0
           AND r.$dbCol IS NOT NULL AND r.$dbCol > 0
           $sessionFilter
@@ -8275,7 +8287,7 @@ function handleParityByCombo(PDO $pdo): void {
         // Resolve engine combo
         $comboName = 'Unknown';
         $comboId = null;
-        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $category);
         if ($resolved) {
             $comboName = $resolved['name'];
             $comboId = $resolved['id'];
@@ -8758,7 +8770,7 @@ function parity_loadEventRunData(PDO $pdo): array {
         // Always resolve engine combo (needed for weather correction)
         $comboName = 'Unknown';
         $comboId = null;
-        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+        $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $category);
         if ($resolved) {
             $comboName = $resolved['name'];
             $comboId = $resolved['id'];
@@ -8768,7 +8780,7 @@ function parity_loadEventRunData(PDO $pdo): array {
         $groupLabel = 'Unknown';
         $groupId = null;
         if ($groupBy === 'bodyStyle') {
-            $bsResolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles);
+            $bsResolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $category);
             if ($bsResolved) {
                 $groupLabel = $bsResolved['name'];
                 $groupId = $bsResolved['id'];
@@ -9198,9 +9210,10 @@ function handleParityQualOrder(PDO $pdo): void {
         }
     });
     // Always resolve body style (needed for secondary-group display in all categories)
+    $category = $p['category'] ?? '';
     foreach ($qualOrder as $idx => &$qr) {
         $qr['qualPosition'] = $idx + 1;
-        $bsResolved = resolveBodyStyleForRun($qr['driver'], $qr['classIndex'] ?? '', $qr['timestamp'] ?? '', $driverBodyStyles);
+        $bsResolved = resolveBodyStyleForRun($qr['driver'], $qr['classIndex'] ?? '', $qr['timestamp'] ?? '', $driverBodyStyles, $category);
         $qr['bodyStyle']   = $bsResolved ? $bsResolved['name'] : null;
         $qr['bodyStyleId'] = $bsResolved ? (int)$bsResolved['id'] : null;
         
@@ -9381,12 +9394,12 @@ function handleRangeParityMatrix(PDO $pdo): void {
         $comboValues = []; // groupName => [values]
         foreach ($runs as $run) {
             if ($groupBy === 'bodyStyle') {
-                $resolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles);
+                $resolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $category);
                 if (!$resolved) continue;
                 $comboName = $resolved['name'];
                 $comboId = null; // body styles don't use HPC correction
             } else {
-                $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+                $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $category);
                 if (!$resolved) continue;
                 $comboName = $resolved['name'];
                 $comboId = $resolved['id'];
@@ -9628,11 +9641,11 @@ function handleParityIncrementals(PDO $pdo): void {
         if ($isFlagged && !$includeFlagged) continue;
 
         if ($groupBy === 'bodyStyle') {
-            $resolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles);
+            $resolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $p['category'] ?? '');
             $comboName = $resolved ? $resolved['name'] : 'Unknown';
             $comboId = 0; // body styles don't use HPC correction
         } else {
-            $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+            $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $p['category'] ?? '');
             $comboName = $resolved ? $resolved['name'] : 'Unknown';
             $comboId = $resolved ? (int)$resolved['id'] : 0;
         }
@@ -9946,10 +9959,25 @@ function handleParitySessionWeather(PDO $pdo): void {
 }
 
 /** Resolve engine combo for a run using driver combos + class defaults. */
-function resolveComboForRun(?string $driverName, ?string $classIndex, ?string $runTs, array $driverCombos, array $classDefaults): ?array {
-    if (!$driverName || !$classIndex || !$runTs) return null;
+function resolveComboForRun(?string $driverName, ?string $classIndex, ?string $runTs, array $driverCombos, array $classDefaults, ?string $category = null): ?array {
+    if (!$driverName || !$runTs) return null;
+    // If classIndex is null but category provided, try to derive class from category
+    $ci = strtoupper($classIndex ?? '');
+    if ($ci === '' && $category) {
+        static $CAT_CLASS_MAP = [
+            'TOP FUEL'               => 'TF',
+            'FUNNY CAR'              => 'FC',
+            'PRO STOCK'              => 'PRO',
+            'PRO STOCK MOTORCYCLE'   => 'PSM',
+            'PRO MOD'                => 'PM',
+            'TOP ALCOHOL DRAGSTER'   => 'TAD',
+            'TOP ALCOHOL FUNNY CAR'  => 'TAFC',
+        ];
+        $catKey = strtoupper(trim($category));
+        $ci = $CAT_CLASS_MAP[$catKey] ?? '';
+    }
+    if ($ci === '') return null;
     $dn = strtoupper($driverName);
-    $ci = strtoupper($classIndex);
     $ts = strtotime($runTs);
     if ($ts === false) return null;
 
@@ -9992,10 +10020,25 @@ function resolveComboForRun(?string $driverName, ?string $classIndex, ?string $r
 }
 
 /** Resolve body style for a run using driver body style assignments. */
-function resolveBodyStyleForRun(?string $driverName, ?string $classIndex, ?string $runTs, array $driverBodyStyles): ?array {
-    if (!$driverName || !$classIndex || !$runTs) return null;
+function resolveBodyStyleForRun(?string $driverName, ?string $classIndex, ?string $runTs, array $driverBodyStyles, ?string $category = null): ?array {
+    if (!$driverName || !$runTs) return null;
+    // If classIndex is null but category provided, try to derive class from category
+    $ci = strtoupper($classIndex ?? '');
+    if ($ci === '' && $category) {
+        static $CAT_CLASS_MAP = [
+            'TOP FUEL'               => 'TF',
+            'FUNNY CAR'              => 'FC',
+            'PRO STOCK'              => 'PRO',
+            'PRO STOCK MOTORCYCLE'   => 'PSM',
+            'PRO MOD'                => 'PM',
+            'TOP ALCOHOL DRAGSTER'   => 'TAD',
+            'TOP ALCOHOL FUNNY CAR'  => 'TAFC',
+        ];
+        $catKey = strtoupper(trim($category));
+        $ci = $CAT_CLASS_MAP[$catKey] ?? '';
+    }
+    if ($ci === '') return null;
     $dn = strtoupper($driverName);
-    $ci = strtoupper($classIndex);
     $ts = strtotime($runTs);
     if ($ts === false) return null;
 
@@ -10121,7 +10164,7 @@ function handleIncrementalComparison(PDO $pdo): void {
 
         // Apply HPC correction
         if ($mode === 'corrected' && $run['run_timestamp_utc']) {
-            $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
+            $resolved = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $p['category'] ?? '');
             $comboId = $resolved ? (int)$resolved['id'] : 0;
             if ($comboId && isset($engineCombos[$comboId]) && $stmtWeather) {
                 $stmtWeather->execute([$run['run_timestamp_utc'], $weatherWindow, $run['run_timestamp_utc']]);
@@ -10171,8 +10214,8 @@ function handleIncrementalComparison(PDO $pdo): void {
         $last18mph   = ($run['mph660'] !== null && $run['mph1320'] !== null) ? round($run['mph1320'] - $run['mph660'], 2) : null;
 
         // Resolve engine combo and body style names
-        $resolvedCombo = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults);
-        $resolvedBody  = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles);
+        $resolvedCombo = resolveComboForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverCombos, $classDefaults, $p['category'] ?? '');
+        $resolvedBody  = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $p['category'] ?? '');
 
         $rows[] = [
             'pos'          => $pos,
@@ -13747,5 +13790,325 @@ function handleRangeParityMatrixUnified(PDO $pdo): void {
         'events'        => $outEvents,
         'combos'        => $comboNamesSorted,
         'matrix'        => $matrix,
+    ]);
+}
+
+// ============================================================================
+// GET ?action=seasonCategoryHistory&seasonYear=2024&category=Pro+Stock
+//
+// Returns a full season standings grid for a category/year:
+//  - One driver row per (driver_name, engine_combo) combination
+//  - Per-event qualifying position with win/runner_up/semi/dnq classification
+//  - Summary columns: events, wins, runner_ups, no1_quals, dnqs, best_qual
+//  - Footer stats per event: racer_count, low ET/speed for qual and elim
+// ============================================================================
+
+function handleSeasonCategoryHistory(PDO $pdo): void {
+    $seasonYear = (int)($_GET['seasonYear'] ?? 0);
+    $category   = trim($_GET['category'] ?? '');
+
+    if ($seasonYear <= 0) rsa_jsonResponse(['error' => 'seasonYear is required'], 400);
+    if ($category === '') rsa_jsonResponse(['error' => 'category is required'], 400);
+
+    // ── 1. Fetch events for this season that have runs in this category ──────
+    $evStmt = $pdo->prepare("
+        SELECT DISTINCT e.id, e.event_name, e.event_code, e.race_lookup, e.start_date_local, e.end_date_local
+        FROM parity_events e
+        WHERE e.season_year = ?
+          AND EXISTS (
+              SELECT 1 FROM parity_runs r
+              WHERE r.race_lookup = e.race_lookup
+                AND UPPER(r.category) = UPPER(?)
+          )
+        ORDER BY e.start_date_local ASC
+    ");
+    $evStmt->execute([$seasonYear, $category]);
+    $eventsRaw = $evStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    if (empty($eventsRaw)) {
+        rsa_jsonResponse([
+            'season_year'  => $seasonYear,
+            'category'     => $category,
+            'events'       => [],
+            'drivers'      => [],
+            'event_stats'  => (object)[],
+        ]);
+        return;
+    }
+
+    // Build ordered list and lookup map
+    $events = [];
+    $raceLookups = [];
+    foreach ($eventsRaw as $ev) {
+        $rl = $ev['race_lookup'];
+        $raceLookups[] = $rl;
+        $events[] = [
+            'race_lookup'      => $rl,
+            'event_name'       => $ev['event_name'],
+            'event_code'       => $ev['event_code'],
+            'start_date_local' => $ev['start_date_local'],
+        ];
+    }
+    $rlPlaceholders = implode(',', array_fill(0, count($raceLookups), '?'));
+
+    // ── 2. Fetch all runs for these events in this category ──────────────────
+    $runParams = array_merge($raceLookups, [strtoupper($category)]);
+    $runStmt = $pdo->prepare("
+        SELECT r.race_lookup, r.driver_name, r.car_number, r.round, r.lane,
+               r.ft1320, r.mph1320, r.win_flag, r.dq_flag, r.place,
+               r.run_timestamp_utc
+        FROM parity_runs r
+        WHERE r.race_lookup IN ($rlPlaceholders)
+          AND UPPER(r.category) = ?
+          AND r.dq_flag = 0
+        ORDER BY r.race_lookup, r.driver_name, r.round, r.run_timestamp_utc
+    ");
+    $runStmt->execute($runParams);
+    $allRuns = $runStmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Cast types
+    foreach ($allRuns as &$r) {
+        $r['ft1320']   = $r['ft1320']   !== null ? (float)$r['ft1320']   : null;
+        $r['mph1320']  = $r['mph1320']  !== null ? (float)$r['mph1320']  : null;
+        $r['win_flag'] = (bool)(int)($r['win_flag'] ?? 0);
+        $r['dq_flag']  = (bool)(int)($r['dq_flag']  ?? 0);
+    }
+    unset($r);
+
+    // ── 3. Load engine combo assignments for all drivers seen ────────────────
+    // parity_driver_combos has effective_from_utc / effective_to_utc (NULL = open)
+    // We resolve combo by run timestamp.
+    $driverNames = array_values(array_unique(array_column($allRuns, 'driver_name')));
+    $combosByDriver = []; // [driver_name][] = { engine_combo_id, name, from, to }
+    if (!empty($driverNames)) {
+        $dnPlaceholders = implode(',', array_fill(0, count($driverNames), '?'));
+        $comboStmt = $pdo->prepare("
+            SELECT dc.driver_name, dc.engine_combo_id, ec.name AS combo_name,
+                   dc.effective_from_utc, dc.effective_to_utc
+            FROM parity_driver_combos dc
+            JOIN parity_engine_combos ec ON ec.id = dc.engine_combo_id
+            WHERE dc.driver_name IN ($dnPlaceholders)
+            ORDER BY dc.driver_name, dc.effective_from_utc
+        ");
+        $comboStmt->execute($driverNames);
+        foreach ($comboStmt->fetchAll(PDO::FETCH_ASSOC) as $row) {
+            $combosByDriver[$row['driver_name']][] = $row;
+        }
+    }
+
+    // Helper: resolve combo name for a driver at a given UTC timestamp
+    $resolveCombo = function(string $driverName, ?string $runTs) use ($combosByDriver): ?string {
+        if (!isset($combosByDriver[$driverName])) return null;
+        if ($runTs === null) {
+            // No timestamp: return the most recent (last) assignment
+            $last = end($combosByDriver[$driverName]);
+            return $last ? $last['combo_name'] : null;
+        }
+        foreach ($combosByDriver[$driverName] as $asgn) {
+            $from = $asgn['effective_from_utc'];
+            $to   = $asgn['effective_to_utc'];
+            if ($runTs >= $from && ($to === null || $runTs < $to)) {
+                return $asgn['combo_name'];
+            }
+        }
+        return null;
+    };
+
+    // ── 4. Determine round ordering per event ────────────────────────────────
+    // Group rounds into qual (starts with Q) and elim (everything else).
+    // For elim rounds, sort by round name to find final and semi-final.
+    // NHRA uses R1..R4 where R4=first round and R1=final (for 16-car field).
+    // We detect "final" as the elim round with the lowest numeric suffix (or
+    // alphabetically last if no numeric suffix) among elim rounds present.
+
+    $roundsByEvent = []; // [race_lookup][] = round_name
+    foreach ($allRuns as $r) {
+        $rl = $r['race_lookup'];
+        $rnd = $r['round'] ?? '';
+        if ($rnd !== '') $roundsByEvent[$rl][$rnd] = true;
+    }
+
+    // Returns ['final' => string|null, 'semi' => string|null] for a set of elim rounds
+    $classifyElimRounds = function(array $elimRounds): array {
+        if (empty($elimRounds)) return ['final' => null, 'semi' => null];
+        // Sort: rounds with lower number = later in bracket (R1 is final in 16-car)
+        usort($elimRounds, function($a, $b) {
+            preg_match('/(\d+)/', $a, $ma);
+            preg_match('/(\d+)/', $b, $mb);
+            $na = isset($ma[1]) ? (int)$ma[1] : 999;
+            $nb = isset($mb[1]) ? (int)$mb[1] : 999;
+            return $na <=> $nb; // ascending: R1 first = final
+        });
+        $final = $elimRounds[0] ?? null;
+        $semi  = $elimRounds[1] ?? null;
+        return ['final' => $final, 'semi' => $semi];
+    };
+
+    $eventRoundMap = []; // [race_lookup] => ['final'=>..., 'semi'=>...]
+    foreach ($roundsByEvent as $rl => $rounds) {
+        $elimRounds = array_values(array_filter(array_keys($rounds), fn($rnd) => !preg_match('/^Q/i', $rnd)));
+        $eventRoundMap[$rl] = $classifyElimRounds($elimRounds);
+    }
+
+    // ── 5. Build per-(driver, combo) per-event data ──────────────────────────
+    // Key: "DriverName|||ComboName" (combo null => "")
+    $driverEventData = []; // [key][race_lookup] = { qual_pos, result, car_number }
+    $driverMeta      = []; // [key] = { driver_name, car_number, combo_name }
+
+    foreach ($allRuns as $r) {
+        $rl         = $r['race_lookup'];
+        $driverName = $r['driver_name'] ?? '';
+        $round      = $r['round'] ?? '';
+        $comboName  = $resolveCombo($driverName, $r['run_timestamp_utc']);
+        $key        = $driverName . '|||' . ($comboName ?? '');
+
+        if (!isset($driverEventData[$key])) $driverEventData[$key] = [];
+        if (!isset($driverEventData[$key][$rl])) {
+            $driverEventData[$key][$rl] = [
+                'qual_pos'   => null,
+                'result'     => null, // win | runner_up | semi | dnq | null
+                'car_number' => $r['car_number'] ?? '',
+            ];
+        }
+        if (!isset($driverMeta[$key])) {
+            $driverMeta[$key] = [
+                'driver_name' => $driverName,
+                'car_number'  => $r['car_number'] ?? '',
+                'combo_name'  => $comboName,
+            ];
+        }
+
+        $isQual = preg_match('/^Q/i', $round);
+        $entry  = &$driverEventData[$key][$rl];
+
+        if ($isQual) {
+            // Track best (lowest numeric) qualifying position
+            $pos = $r['place'] !== null && $r['place'] !== '' ? (int)$r['place'] : null;
+            if ($pos !== null && $pos > 0) {
+                if ($entry['qual_pos'] === null || $pos < $entry['qual_pos']) {
+                    $entry['qual_pos'] = $pos;
+                }
+            }
+        } else {
+            // Elimination round: classify result
+            $finalRound = $eventRoundMap[$rl]['final']  ?? null;
+            $semiRound  = $eventRoundMap[$rl]['semi']   ?? null;
+
+            if ($finalRound && $round === $finalRound) {
+                if ($r['win_flag']) {
+                    $entry['result'] = 'win';
+                } elseif ($entry['result'] !== 'win') {
+                    $entry['result'] = 'runner_up';
+                }
+            } elseif ($semiRound && $round === $semiRound) {
+                if ($entry['result'] === null) {
+                    $entry['result'] = 'semi';
+                }
+            }
+        }
+        unset($entry);
+    }
+
+    // Mark DNQ: driver has qual runs but no valid place ≤ 16
+    foreach ($driverEventData as $key => &$evMap) {
+        foreach ($evMap as $rl => &$entry) {
+            if ($entry['qual_pos'] === null && $entry['result'] === null) {
+                // Check if they even had qual runs
+                $hasQualRuns = false;
+                foreach ($allRuns as $r) {
+                    if ($r['race_lookup'] === $rl && ($r['driver_name'] . '|||' . ($resolveCombo($r['driver_name'], $r['run_timestamp_utc']) ?? '')) === $key) {
+                        if (preg_match('/^Q/i', $r['round'] ?? '')) {
+                            $hasQualRuns = true;
+                            break;
+                        }
+                    }
+                }
+                if ($hasQualRuns) $entry['result'] = 'dnq';
+            }
+        }
+        unset($entry);
+    }
+    unset($evMap);
+
+    // ── 6. Compute summary stats per driver+combo ────────────────────────────
+    $driverRows = [];
+    foreach ($driverEventData as $key => $evMap) {
+        $meta        = $driverMeta[$key];
+        $eventsCount = count($evMap);
+        $wins        = 0;
+        $runnerUps   = 0;
+        $no1Quals    = 0;
+        $dnqs        = 0;
+        $bestQual    = null;
+
+        foreach ($evMap as $entry) {
+            if ($entry['result'] === 'win')        $wins++;
+            if ($entry['result'] === 'runner_up')  $runnerUps++;
+            if ($entry['result'] === 'dnq')        $dnqs++;
+            $qp = $entry['qual_pos'];
+            if ($qp === 1) $no1Quals++;
+            if ($qp !== null && ($bestQual === null || $qp < $bestQual)) $bestQual = $qp;
+        }
+
+        $driverRows[] = [
+            'driver_name'   => $meta['driver_name'],
+            'car_number'    => $meta['car_number'],
+            'combo_name'    => $meta['combo_name'],
+            'events_entered'=> $eventsCount,
+            'wins'          => $wins,
+            'runner_ups'    => $runnerUps,
+            'no1_quals'     => $no1Quals,
+            'dnqs'          => $dnqs,
+            'best_qual'     => $bestQual,
+            'event_results' => $evMap,
+        ];
+    }
+
+    // Sort: events_entered desc → wins desc → runner_ups desc → no1_quals desc
+    usort($driverRows, function($a, $b) {
+        if ($b['events_entered'] !== $a['events_entered']) return $b['events_entered'] - $a['events_entered'];
+        if ($b['wins']           !== $a['wins'])           return $b['wins']           - $a['wins'];
+        if ($b['runner_ups']     !== $a['runner_ups'])     return $b['runner_ups']     - $a['runner_ups'];
+        return $b['no1_quals'] - $a['no1_quals'];
+    });
+
+    // ── 7. Compute per-event footer stats ────────────────────────────────────
+    $eventStats = [];
+    foreach ($raceLookups as $rl) {
+        $qualRuns = array_filter($allRuns, fn($r) => $r['race_lookup'] === $rl && preg_match('/^Q/i', $r['round'] ?? ''));
+        $elimRuns = array_filter($allRuns, fn($r) => $r['race_lookup'] === $rl && !preg_match('/^Q/i', $r['round'] ?? ''));
+
+        // Unique racer count (all runs, not just qual)
+        $allEventRuns = array_filter($allRuns, fn($r) => $r['race_lookup'] === $rl);
+        $racerCount   = count(array_unique(array_column(array_values($allEventRuns), 'driver_name')));
+
+        $findBest = function(array $runs, string $field, bool $lowest): ?array {
+            $best = null; $bestVal = null; $bestDriver = null;
+            foreach ($runs as $r) {
+                $val = $r[$field];
+                if ($val === null || $val <= 0) continue;
+                if ($bestVal === null || ($lowest ? $val < $bestVal : $val > $bestVal)) {
+                    $bestVal    = $val;
+                    $bestDriver = $r['driver_name'];
+                }
+            }
+            return $bestVal !== null ? ['driver' => $bestDriver, $field => $bestVal] : null;
+        };
+
+        $eventStats[$rl] = [
+            'racer_count'    => $racerCount,
+            'low_et_qual'    => $findBest(array_values($qualRuns), 'ft1320',  true),
+            'top_speed_qual' => $findBest(array_values($qualRuns), 'mph1320', false),
+            'low_et_elim'    => $findBest(array_values($elimRuns), 'ft1320',  true),
+            'top_speed_elim' => $findBest(array_values($elimRuns), 'mph1320', false),
+        ];
+    }
+
+    rsa_jsonResponse([
+        'season_year'  => $seasonYear,
+        'category'     => $category,
+        'events'       => $events,
+        'drivers'      => $driverRows,
+        'event_stats'  => $eventStats,
     ]);
 }
