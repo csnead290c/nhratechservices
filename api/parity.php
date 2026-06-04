@@ -11637,10 +11637,7 @@ function handleTimeDiagnosticsSample(PDO $pdo, array $auth): void {
 // ============================================================================
 function handleUpdateRun(PDO $pdo, ?array $auth): void {
     if (!$auth) rsa_jsonResponse(['error' => 'Authentication required'], 401);
-    $caps = $auth['capabilities'] ?? [];
-    if (!in_array('nhra.parity.admin', $caps)) {
-        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity.admin required'], 403);
-    }
+    requireAdminRole($auth);
 
     $body = json_decode(file_get_contents('php://input'), true);
     if (!$body) rsa_jsonResponse(['error' => 'Invalid JSON body'], 400);
