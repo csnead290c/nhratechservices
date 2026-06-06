@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { isEventOngoing, AUTO_REFRESH_INTERVAL_MS } from '../useAutoRefresh';
+import { isEventOngoing, AUTO_REFRESH_TIMING_INTERVAL_MS, AUTO_REFRESH_WEATHER_INTERVAL_MS } from '../useAutoRefresh';
 
 // ── isEventOngoing ──────────────────────────────────────────────────────
 
@@ -60,9 +60,15 @@ describe('isEventOngoing', () => {
 
 // ── Constants ────────────────────────────────────────────────────────────
 
-describe('AUTO_REFRESH_INTERVAL_MS', () => {
+describe('AUTO_REFRESH_TIMING_INTERVAL_MS', () => {
   it('is 60 seconds', () => {
-    expect(AUTO_REFRESH_INTERVAL_MS).toBe(60_000);
+    expect(AUTO_REFRESH_TIMING_INTERVAL_MS).toBe(60_000);
+  });
+});
+
+describe('AUTO_REFRESH_WEATHER_INTERVAL_MS', () => {
+  it('is 5 minutes', () => {
+    expect(AUTO_REFRESH_WEATHER_INTERVAL_MS).toBe(300_000);
   });
 });
 

@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-/** How often to auto-refetch visible data (ms). */
-export const AUTO_REFRESH_INTERVAL_MS = 60_000; // 60 seconds
+/** How often to auto-refetch timing data from OData API (ms). */
+export const AUTO_REFRESH_TIMING_INTERVAL_MS = 60_000; // 60 seconds
+
+/** How often to auto-refetch weather data (ms). */
+export const AUTO_REFRESH_WEATHER_INTERVAL_MS = 300_000; // 5 minutes
 
 /**
  * Determines whether an event is "ongoing" based on its date range.
@@ -33,58 +36,101 @@ export function isEventOngoing(
 }
 
 /**
- * Hook that calls `onRefresh` at a fixed interval, gated by:
+ * Hook that auto-refreshes timing and weather data on separate intervals.
+ *
+ * Timing refresh (default 60s): Fetches fresh run data from OData API.
+ * Weather refresh (default 5min): Fetches weather from Tempest/Open-Meteo.
+ *
+ * Both are gated by:
  *   1. `enabled` flag (caller controls — typically isEventOngoing)
  *   2. Tab is visible (document.visibilityState === 'visible')
  *   3. User hasn't toggled it off
  *
- * Returns { autoRefreshOn, toggleAutoRefresh, lastAutoRefreshAt }.
+ * Weather failures do NOT block timing refreshes—they run independently.
  */
 export function useAutoRefresh(
-  onRefresh: () => void | Promise<void>,
+  onRefreshTiming: () => void | Promise<void>,
+  onRefreshWeather: () => void | Promise<void>,
   enabled: boolean,
-  intervalMs: number = AUTO_REFRESH_INTERVAL_MS,
+  timingIntervalMs: number = AUTO_REFRESH_TIMING_INTERVAL_MS,
+  weatherIntervalMs: number = AUTO_REFRESH_WEATHER_INTERVAL_MS,
 ): {
   autoRefreshOn: boolean;
   toggleAutoRefresh: () => void;
-  lastAutoRefreshAt: number | null;
+  lastTimingRefreshAt: number | null;
+  lastWeatherRefreshAt: number | null;
+  isTimingRefreshing: boolean;
+  isWeatherRefreshing: boolean;
 } {
   const [userEnabled, setUserEnabled] = useState(true);
-  const [lastAutoRefreshAt, setLastAutoRefreshAt] = useState<number | null>(null);
-  const onRefreshRef = useRef(onRefresh);
-  onRefreshRef.current = onRefresh;
+  const [lastTimingRefreshAt, setLastTimingRefreshAt] = useState<number | null>(null);
+  const [lastWeatherRefreshAt, setLastWeatherRefreshAt] = useState<number | null>(null);
+  const [isTimingRefreshing, setIsTimingRefreshing] = useState(false);
+  const [isWeatherRefreshing, setIsWeatherRefreshing] = useState(false);
+
+  const onTimingRef = useRef(onRefreshTiming);
+  const onWeatherRef = useRef(onRefreshWeather);
+  onTimingRef.current = onRefreshTiming;
+  onWeatherRef.current = onRefreshWeather;
 
   const active = enabled && userEnabled;
 
+  // Timing refresh interval
   useEffect(() => {
     if (!active) return;
 
-    let timer: ReturnType<typeof setInterval> | null = null;
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
 
-    const tick = () => {
-      if (document.visibilityState === 'visible') {
-        setLastAutoRefreshAt(Date.now());
-        onRefreshRef.current();
+      setIsTimingRefreshing(true);
+      setLastTimingRefreshAt(Date.now());
+      try {
+        await onTimingRef.current();
+      } catch (err) {
+        // Log but don't stop the interval
+        console.error('[useAutoRefresh] Timing refresh failed:', err);
+      } finally {
+        setIsTimingRefreshing(false);
       }
     };
 
-    timer = setInterval(tick, intervalMs);
+    const timer = setInterval(tick, timingIntervalMs);
 
-    // Also listen for visibility changes — if tab becomes visible and enough
-    // time passed, fire immediately
-    const onVisChange = () => {
-      // No-op: the interval will fire on next tick. We just ensure we don't
-      // fire while hidden.
-    };
-    document.addEventListener('visibilitychange', onVisChange);
+    return () => clearInterval(timer);
+  }, [active, timingIntervalMs]);
 
-    return () => {
-      if (timer) clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisChange);
+  // Weather refresh interval
+  useEffect(() => {
+    if (!active) return;
+
+    const tick = async () => {
+      if (document.visibilityState !== 'visible') return;
+
+      setIsWeatherRefreshing(true);
+      setLastWeatherRefreshAt(Date.now());
+      try {
+        await onWeatherRef.current();
+      } catch (err) {
+        // Log but don't stop the interval or affect timing
+        console.error('[useAutoRefresh] Weather refresh failed:', err);
+      } finally {
+        setIsWeatherRefreshing(false);
+      }
     };
-  }, [active, intervalMs]);
+
+    const timer = setInterval(tick, weatherIntervalMs);
+
+    return () => clearInterval(timer);
+  }, [active, weatherIntervalMs]);
 
   const toggleAutoRefresh = useCallback(() => setUserEnabled(prev => !prev), []);
 
-  return { autoRefreshOn: active, toggleAutoRefresh, lastAutoRefreshAt };
+  return {
+    autoRefreshOn: active,
+    toggleAutoRefresh,
+    lastTimingRefreshAt,
+    lastWeatherRefreshAt,
+    isTimingRefreshing,
+    isWeatherRefreshing,
+  };
 }

@@ -520,6 +520,69 @@ export default function ParityPortal() {
     return () => { cancelled = true; };
   }, [selectedEventId, selectedDivision]);
 
+  // ── Auto-refresh callback: timing only (lightweight, every 60s) ─────────
+  const handleAutoRefreshTiming = useCallback(async () => {
+    if (!selectedEventId) return;
+
+    // Divisional events use divApi
+    if (selectedDivision !== 'nationals') {
+      try {
+        const res = await divApi.refreshDivEventData({ eventId: selectedEventId });
+        setRefreshKey(k => k + 1);
+        loadEvents(selectedYear, selectedDivision);
+        divApi.divEventCategories(selectedEventId).then(r => setEventCategories(r.categories as any[])).catch(() => {});
+        if (res.ok) {
+          setAutoRefreshStatus(prev => ({ ...prev, lastTiming: Date.now(), timingError: null }));
+        }
+      } catch (err: any) {
+        console.error('[autoRefresh] Divisional timing refresh failed:', err);
+        setAutoRefreshStatus(prev => ({ ...prev, timingError: err.message || 'Failed' }));
+      }
+      return;
+    }
+
+    // Nationals: use parityApi.refreshTimingOnly
+    try {
+      const timingRes = await parityApi.refreshTimingOnly(selectedEventId);
+      setRefreshKey(k => k + 1);
+      loadEvents(selectedYear, selectedDivision);
+      parityApi.eventCategories(selectedEventId).then(r => setEventCategories(r.categories)).catch(() => {});
+      if (timingRes.ok) {
+        setAutoRefreshStatus(prev => ({ ...prev, lastTiming: Date.now(), timingError: null }));
+      }
+    } catch (err: any) {
+      console.error('[autoRefresh] Timing refresh failed:', err);
+      setAutoRefreshStatus(prev => ({ ...prev, timingError: err.message || 'Failed' }));
+    }
+  }, [selectedEventId, selectedYear, selectedDivision, loadEvents]);
+
+  // ── Auto-refresh callback: weather only (slower, every 5min) ────────────
+  const handleAutoRefreshWeather = useCallback(async () => {
+    if (!selectedEventId) return;
+
+    // Divisional events: weather is included in the single refresh call, skip separate weather
+    if (selectedDivision !== 'nationals') {
+      return;
+    }
+
+    try {
+      await parityApi.refreshWeather(selectedEventId);
+      setAutoRefreshStatus(prev => ({ ...prev, lastWeather: Date.now(), weatherError: null }));
+      setRefreshKey(k => k + 1); // re-trigger load with weather now joined
+    } catch (err: any) {
+      console.error('[autoRefresh] Weather refresh failed:', err);
+      setAutoRefreshStatus(prev => ({ ...prev, weatherError: err.message || 'Failed' }));
+    }
+  }, [selectedEventId, selectedDivision]);
+
+  // Track auto-refresh status for UI display
+  const [autoRefreshStatus, setAutoRefreshStatus] = useState<{
+    lastTiming: number | null;
+    lastWeather: number | null;
+    timingError: string | null;
+    weatherError: string | null;
+  }>({ lastTiming: null, lastWeather: null, timingError: null, weatherError: null });
+
   const handleRefreshEventData = useCallback(async () => {
     if (!selectedEventId || refreshingPhase1) return;
 
@@ -624,8 +687,16 @@ export default function ParityPortal() {
     ? isEventOngoing(selectedEvent.start_date_local, selectedEvent.end_date_local, selectedEvent.timezone_iana)
     : false;
 
-  const { autoRefreshOn, toggleAutoRefresh } = useAutoRefresh(
-    useCallback(() => { setRefreshKey(k => k + 1); }, []),
+  const {
+    autoRefreshOn,
+    toggleAutoRefresh,
+    lastTimingRefreshAt,
+    lastWeatherRefreshAt,
+    isTimingRefreshing,
+    isWeatherRefreshing,
+  } = useAutoRefresh(
+    handleAutoRefreshTiming,
+    handleAutoRefreshWeather,
     eventIsOngoing && !showAdminTools,
   );
 
@@ -726,13 +797,25 @@ export default function ParityPortal() {
           </>
         )}
         {eventIsOngoing && (
-          <button
-            style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.15rem 0.4rem', opacity: 0.8, whiteSpace: 'nowrap' }}
-            onClick={toggleAutoRefresh}
-            title={autoRefreshOn ? 'Auto-refresh is ON (60s). Click to pause.' : 'Auto-refresh is paused. Click to resume.'}
-          >
-            {autoRefreshOn ? '⟳ Auto: ON' : '⏸ Auto: OFF'}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <button
+              style={{ ...S.btn('secondary'), fontSize: '0.65rem', padding: '0.15rem 0.4rem', opacity: 0.8, whiteSpace: 'nowrap' }}
+              onClick={toggleAutoRefresh}
+              title={autoRefreshOn ? 'Auto-refresh ON: runs every 60s, weather every 5min. Click to pause.' : 'Auto-refresh paused. Click to resume.'}
+            >
+              {autoRefreshOn ? '⟳ Auto: ON' : '⏸ Auto: OFF'}
+              {isTimingRefreshing && ' (runs...)'}
+              {isWeatherRefreshing && ' (weather...)'}
+            </button>
+            {autoRefreshOn && (
+              <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)' }}>
+                {lastTimingRefreshAt && `Runs: ${Math.round((Date.now() - lastTimingRefreshAt) / 1000)}s ago`}
+                {selectedDivision === 'nationals' && lastWeatherRefreshAt && ` • Weather: ${Math.round((Date.now() - lastWeatherRefreshAt) / 60000)}m ago`}
+                {autoRefreshStatus.timingError && ' • Run refresh failed'}
+                {autoRefreshStatus.weatherError && ' • Weather refresh failed'}
+              </span>
+            )}
+          </div>
         )}
         {isAdmin && !showAdminTools && (
           <button style={{ ...S.btn('secondary'), fontSize: '0.65rem', opacity: 0.6, padding: '0.2rem 0.5rem', marginLeft: 'auto', whiteSpace: 'nowrap' }}
