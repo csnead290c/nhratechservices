@@ -389,6 +389,10 @@ switch ($action) {
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleDrivers($pdo);
         break;
+    case 'driverCategories':
+        if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleDriverCategories($pdo);
+        break;
     case 'runsByDriver':
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleRunsByDriver($pdo);
@@ -5419,6 +5423,46 @@ function handleEventSummary(PDO $pdo): void {
         'weatherJoinPct'  => $weatherJoinPct,
         'flaggedCount'    => $flaggedCount,
         'correction_model_version' => PARITY_CORRECTION_MODEL_VERSION,
+    ]);
+}
+
+// ============================================================================
+// GET ?action=driverCategories&driverName=
+// Returns: categories a driver has run in, sorted by total run count desc.
+// Used to populate the category dropdown on the Driver History page.
+// ============================================================================
+
+function handleDriverCategories(PDO $pdo): void {
+    $driverName = trim($_GET['driverName'] ?? '');
+    if ($driverName === '') rsa_jsonResponse(['error' => 'driverName is required'], 400);
+
+    $cutoff = date('Y-m-d H:i:s', strtotime('-90 days'));
+
+    $stmt = $pdo->prepare("
+        SELECT
+            r.category,
+            COUNT(*) AS total_run_count,
+            SUM(CASE WHEN r.run_timestamp_utc >= ? THEN 1 ELSE 0 END) AS recent_run_count,
+            MAX(r.race_lookup) AS last_race_lookup
+        FROM parity_runs r
+        WHERE r.driver_name = ?
+          AND r.category IS NOT NULL AND r.category != ''
+        GROUP BY r.category
+        ORDER BY total_run_count DESC
+    ");
+    $stmt->execute([$cutoff, $driverName]);
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    rsa_jsonResponse([
+        'driverName' => $driverName,
+        'categories' => array_map(function ($r) {
+            return [
+                'category'         => $r['category'],
+                'total_run_count'  => (int)$r['total_run_count'],
+                'recent_run_count' => (int)$r['recent_run_count'],
+                'last_race_lookup' => $r['last_race_lookup'],
+            ];
+        }, $rows),
     ]);
 }
 

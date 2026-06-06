@@ -100,7 +100,7 @@ import { correctRunClientSide } from '../domain/parity/correctRunClient';
 import { parseCsvWeatherData, WEATHER_PROVIDERS, type WeatherSampleRow } from '../domain/parity/weatherBackfill';
 import { parseBulkCsv, normalizeTrackName } from '../domain/parity/eventImport';
 import { formatLocalTimeLabel, formatLocalDateTime } from '../domain/parity/formatLocalTime';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis, ReferenceLine } from 'recharts';
 import { exportQualSheetPdf, exportLadderPdf, exportParitySummaryPdf } from '../services/parityPdf';
 import { resolveDefaultEvent } from '../domain/parity/resolveDefaultEvent';
 import { useCategoryPreset, CLASS_TO_CATEGORY, normalizeCategory } from '../domain/parity/useClassPreset';
@@ -5695,7 +5695,7 @@ function trendFmtVal(v: number | null | undefined, isET: boolean): string {
 }
 
 // Custom tooltip for the By Event / Season chart
-function TrendsTooltip({ active, payload, label, isET }: any) {
+function TrendsTooltip({ active, payload, label, isET, bestValue }: any) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
@@ -5706,13 +5706,20 @@ function TrendsTooltip({ active, payload, label, isET }: any) {
       {payload.map((p: any, i: number) => {
         const row: TopByEventRow | undefined = p.payload;
         const isMultiSeason = payload.length > 1;
+        const val: number | null = p.value ?? null;
+        const delta = val != null && bestValue != null ? (isET ? val - bestValue : bestValue - val) : null;
         return (
           <div key={i} style={{ marginBottom: i < payload.length - 1 ? '0.4rem' : 0 }}>
             {isMultiSeason && <div style={{ color: p.stroke, fontWeight: 700 }}>{p.name}</div>}
             {row?.eventName && <div style={{ fontWeight: isMultiSeason ? 400 : 700, fontSize: '0.8rem' }}>{row.eventName}</div>}
             {row?.trackName && <div style={{ color: 'var(--color-muted)' }}>{row.trackName}</div>}
             {row?.raceLookup && <div>Date: <b>{formatRaceLookup(row.raceLookup)}</b></div>}
-            <div>{isET ? 'Best ET' : 'Top MPH'}: <b style={{ color: p.stroke }}>{trendFmtVal(p.value, isET)}{isET ? ' sec' : ' mph'}</b></div>
+            <div>{isET ? 'Best ET' : 'Top MPH'}: <b style={{ color: p.stroke }}>{trendFmtVal(val, isET)}{isET ? ' sec' : ' mph'}</b></div>
+            {delta != null && Math.abs(delta) > 0.0001 && (
+              <div style={{ color: delta > 0 ? '#dc2626' : '#16a34a', fontSize: '0.7rem' }}>
+                {delta > 0 ? '+' : ''}{isET ? delta.toFixed(3) : delta.toFixed(1)} vs best
+              </div>
+            )}
             {row?.runCount != null && <div>Runs: <b>{row.runCount}</b></div>}
           </div>
         );
@@ -5953,10 +5960,16 @@ function TrendsPanel() {
                   />
                   <YAxis domain={['auto', 'auto']} tick={{ fontSize: 10 }}
                     tickFormatter={(v: number) => isET ? v.toFixed(2) : v.toFixed(0)} />
-                  <Tooltip content={<TrendsTooltip isET={isET} />} />
+                  <Tooltip content={props => <TrendsTooltip {...props} isET={isET} bestValue={data ? (isET ? Math.min(...data.rows.map(r => r.value ?? Infinity).filter(v => v !== Infinity)) : Math.max(...data.rows.map(r => r.value ?? -Infinity).filter(v => v !== -Infinity))) : null} />} />
+                  {data && (() => {
+                    const best = isET
+                      ? Math.min(...data.rows.map(r => r.value ?? Infinity).filter(v => v !== Infinity))
+                      : Math.max(...data.rows.map(r => r.value ?? -Infinity).filter(v => v !== -Infinity));
+                    return isFinite(best) ? <ReferenceLine y={best} stroke={chartColor} strokeDasharray="5 3" strokeOpacity={0.6} label={{ value: trendFmtVal(best, isET), position: 'right', fontSize: 9, fill: chartColor }} /> : null;
+                  })()}
                   <Line type="monotone" dataKey="value" stroke={chartColor} strokeWidth={2}
                     dot={{ r: 3, fill: chartColor }} activeDot={{ r: 5 }}
-                    name={metricMeta.label} connectNulls />
+                    name={metricMeta.label} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -6143,7 +6156,7 @@ function TrendsPanel() {
                       <Line key={si} type="monotone" dataKey={`s${si}_value`}
                         stroke={SEASON_COLORS[si]} strokeWidth={2}
                         dot={{ r: 3, fill: SEASON_COLORS[si] }} activeDot={{ r: 5 }}
-                        name={`s${si}_value`} connectNulls />
+                        name={`s${si}_value`} />
                     ))}
                   </LineChart>
                 </ResponsiveContainer>
