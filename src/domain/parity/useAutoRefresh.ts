@@ -83,9 +83,13 @@ export function useAutoRefresh(
       if (document.visibilityState !== 'visible') return;
 
       setIsTimingRefreshing(true);
-      setLastTimingRefreshAt(Date.now());
+      const startTime = Date.now();
+      console.log('[useAutoRefresh] Timing refresh starting at', new Date(startTime).toISOString());
       try {
         await onTimingRef.current();
+        // Only update timestamp on success
+        setLastTimingRefreshAt(Date.now());
+        console.log('[useAutoRefresh] Timing refresh completed successfully');
       } catch (err) {
         // Log but don't stop the interval
         console.error('[useAutoRefresh] Timing refresh failed:', err);
@@ -107,9 +111,12 @@ export function useAutoRefresh(
       if (document.visibilityState !== 'visible') return;
 
       setIsWeatherRefreshing(true);
-      setLastWeatherRefreshAt(Date.now());
+      console.log('[useAutoRefresh] Weather refresh starting at', new Date().toISOString());
       try {
         await onWeatherRef.current();
+        // Only update timestamp on success
+        setLastWeatherRefreshAt(Date.now());
+        console.log('[useAutoRefresh] Weather refresh completed successfully');
       } catch (err) {
         // Log but don't stop the interval or affect timing
         console.error('[useAutoRefresh] Weather refresh failed:', err);

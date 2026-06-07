@@ -700,6 +700,14 @@ export default function ParityPortal() {
     eventIsOngoing && !showAdminTools,
   );
 
+  // Ticking state to force "time since last refresh" display to count up
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    if (!autoRefreshOn) return;
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [autoRefreshOn]);
+
   // Build "All Categories" list from event data (unique category names not in RECOMMENDED)
   // Uses normalizeCategory() to avoid duplicates like "Top Fuel" and "TOP FUEL"
   const allEventCategories = useMemo(() => {
@@ -808,9 +816,9 @@ export default function ParityPortal() {
               {isWeatherRefreshing && ' (weather...)'}
             </button>
             {autoRefreshOn && (
-              <span style={{ fontSize: '0.6rem', color: 'var(--color-muted)' }}>
-                {lastTimingRefreshAt && `Runs: ${Math.round((Date.now() - lastTimingRefreshAt) / 1000)}s ago`}
-                {selectedDivision === 'nationals' && lastWeatherRefreshAt && ` • Weather: ${Math.round((Date.now() - lastWeatherRefreshAt) / 60000)}m ago`}
+              <span key={tick} style={{ fontSize: '0.6rem', color: 'var(--color-muted)' }}>
+                {lastTimingRefreshAt && `Runs: ${Math.max(0, Math.round((Date.now() - lastTimingRefreshAt) / 1000))}s ago`}
+                {selectedDivision === 'nationals' && lastWeatherRefreshAt && ` • Weather: ${Math.max(0, Math.round((Date.now() - lastWeatherRefreshAt) / 60000))}m ago`}
                 {autoRefreshStatus.timingError && ' • Run refresh failed'}
                 {autoRefreshStatus.weatherError && ' • Weather refresh failed'}
               </span>
