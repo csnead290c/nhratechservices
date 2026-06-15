@@ -304,6 +304,19 @@ switch ($action) {
         if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleDeleteBodyStyle($pdo, $auth);
         break;
+    // ── Weight Change endpoints (nhra.parity users) ──────────────────────
+    case 'eventsAtTrack':
+        if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleEventsAtTrack($pdo);
+        break;
+    case 'setComboBaseWeight':
+        if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleSetComboBaseWeight($pdo, $auth);
+        break;
+    case 'setBodyStyleWeightModifier':
+        if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleSetBodyStyleWeightModifier($pdo, $auth);
+        break;
     case 'requestBodyStyle':
         if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleRequestBodyStyle($auth);
@@ -6019,7 +6032,7 @@ function handleBulkCreateEvents(PDO $pdo, array $auth): void {
 // ============================================================================
 
 function handleListEngineCombos(PDO $pdo): void {
-    $stmt = $pdo->query("SELECT id, name, category, t_power, d_power, friction_factor, fuel_type, uses_n2o, color_hex, created_at, updated_at FROM parity_engine_combos ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name, category, t_power, d_power, friction_factor, fuel_type, uses_n2o, color_hex, base_weight, created_at, updated_at FROM parity_engine_combos ORDER BY name");
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     foreach ($rows as &$r) {
         $r['id'] = (int)$r['id'];
@@ -6027,6 +6040,7 @@ function handleListEngineCombos(PDO $pdo): void {
         $r['d_power'] = (float)$r['d_power'];
         $r['friction_factor'] = (float)$r['friction_factor'];
         $r['uses_n2o'] = (bool)$r['uses_n2o'];
+        $r['base_weight'] = $r['base_weight'] !== null ? (float)$r['base_weight'] : null;
     }
     rsa_jsonResponse(['combos' => $rows]);
 }
@@ -6126,7 +6140,7 @@ function handleDeleteEngineCombo(PDO $pdo, array $auth): void {
 // ============================================================================
 
 function handleListBodyStyles(PDO $pdo): void {
-    $stmt = $pdo->query("SELECT id, name, category, body_style_num, cd, frontal_area, lift_coef, overhang_in, color_hex, created_at, updated_at FROM parity_body_styles ORDER BY name");
+    $stmt = $pdo->query("SELECT id, name, category, body_style_num, cd, frontal_area, lift_coef, overhang_in, color_hex, weight_modifier, created_at, updated_at FROM parity_body_styles ORDER BY name");
     $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
     foreach ($rows as &$r) {
         $r['id'] = (int)$r['id'];
@@ -6135,6 +6149,7 @@ function handleListBodyStyles(PDO $pdo): void {
         $r['frontal_area'] = (float)$r['frontal_area'];
         $r['lift_coef'] = (float)$r['lift_coef'];
         $r['overhang_in'] = (float)$r['overhang_in'];
+        $r['weight_modifier'] = (float)($r['weight_modifier'] ?? 0);
     }
     rsa_jsonResponse(['bodyStyles' => $rows]);
 }
@@ -6235,6 +6250,113 @@ EMAIL;
 
     $sent = mail('csnead@nhra.com', $subject, $body, $headers);
     rsa_jsonResponse(['ok' => true, 'sent' => $sent]);
+}
+
+// ============================================================================
+// GET ?action=eventsAtTrack&trackId=N&category=...&limit=N
+// Returns completed events at the given track (across all years) that have runs
+// for the category, newest first. Used by the Track Compare parity view.
+// ============================================================================
+
+function handleEventsAtTrack(PDO $pdo): void {
+    $trackId  = (int)($_GET['trackId'] ?? 0);
+    $category = trim($_GET['category'] ?? '');
+    $limit    = (int)($_GET['limit'] ?? 25);
+    if ($trackId <= 0) rsa_jsonResponse(['error' => 'trackId is required'], 400);
+    if ($limit < 1) $limit = 1;
+    if ($limit > 100) $limit = 100;
+
+    // Match runs by category when provided; otherwise return all events at the track.
+    $catJoin = $category !== '' ? "AND r.category = :category" : "";
+    $sql = "
+        SELECT e.id, e.event_name, e.event_code, e.season_year, e.track_id, t.track_name, t.timezone_iana,
+               t.city, t.state,
+               e.start_date_local, e.end_date_local, e.race_lookup, e.created_at,
+               (SELECT COUNT(*) FROM parity_runs r WHERE r.race_lookup = e.race_lookup $catJoin) AS run_count,
+               (SELECT COUNT(*) FROM parity_weather_samples ws WHERE ws.event_id = e.id) AS weather_sample_count
+        FROM parity_events e
+        JOIN parity_tracks t ON t.id = e.track_id
+        WHERE e.track_id = :trackId
+        HAVING run_count > 0
+        ORDER BY e.start_date_local DESC
+        LIMIT $limit
+    ";
+    $stmt = $pdo->prepare($sql);
+    $stmt->bindValue(':trackId', $trackId, PDO::PARAM_INT);
+    if ($category !== '') $stmt->bindValue(':category', $category, PDO::PARAM_STR);
+    $stmt->execute();
+    $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    foreach ($rows as &$r) {
+        $r['id'] = (int)$r['id'];
+        $r['season_year'] = $r['season_year'] !== null ? (int)$r['season_year'] : null;
+        $r['track_id'] = (int)$r['track_id'];
+        $r['run_count'] = (int)$r['run_count'];
+        $r['weather_sample_count'] = (int)$r['weather_sample_count'];
+    }
+
+    rsa_jsonResponse(['events' => $rows, 'count' => count($rows)]);
+}
+
+// ============================================================================
+// POST ?action=setComboBaseWeight   body: { comboId, baseWeight|null }
+// Editable by any nhra.parity user. Shared globally.
+// ============================================================================
+
+function handleSetComboBaseWeight(PDO $pdo, array $auth): void {
+    $userId = rsa_resolveUserId($pdo, $auth);
+    $_role  = rsa_getUserRole($pdo, $userId);
+    if (!rsa_hasCap($pdo, $userId, $_role, 'nhra.parity')) {
+        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity required'], 403);
+    }
+    $input   = rsa_getJsonInput();
+    $comboId = (int)($input['comboId'] ?? 0);
+    if (!$comboId) rsa_jsonResponse(['error' => 'comboId is required'], 400);
+
+    $baseWeight = null;
+    if (array_key_exists('baseWeight', $input) && $input['baseWeight'] !== null && $input['baseWeight'] !== '') {
+        $baseWeight = (float)$input['baseWeight'];
+        if (!is_finite($baseWeight) || $baseWeight < 0) {
+            rsa_jsonResponse(['error' => 'baseWeight must be a non-negative number'], 400);
+        }
+    }
+
+    $chk = $pdo->prepare("SELECT id FROM parity_engine_combos WHERE id=?");
+    $chk->execute([$comboId]);
+    if (!$chk->fetch()) rsa_jsonResponse(['error' => 'Engine combo not found'], 404);
+
+    $pdo->prepare("UPDATE parity_engine_combos SET base_weight=? WHERE id=?")
+        ->execute([$baseWeight, $comboId]);
+    rsa_jsonResponse(['ok' => true, 'comboId' => $comboId, 'baseWeight' => $baseWeight]);
+}
+
+// ============================================================================
+// POST ?action=setBodyStyleWeightModifier   body: { bodyStyleId, weightModifier }
+// Editable by any nhra.parity user. Shared globally.
+// ============================================================================
+
+function handleSetBodyStyleWeightModifier(PDO $pdo, array $auth): void {
+    $userId = rsa_resolveUserId($pdo, $auth);
+    $_role  = rsa_getUserRole($pdo, $userId);
+    if (!rsa_hasCap($pdo, $userId, $_role, 'nhra.parity')) {
+        rsa_jsonResponse(['error' => 'Forbidden: nhra.parity required'], 403);
+    }
+    $input       = rsa_getJsonInput();
+    $bodyStyleId = (int)($input['bodyStyleId'] ?? 0);
+    if (!$bodyStyleId) rsa_jsonResponse(['error' => 'bodyStyleId is required'], 400);
+
+    $modifier = (float)($input['weightModifier'] ?? 0);
+    if (!is_finite($modifier)) {
+        rsa_jsonResponse(['error' => 'weightModifier must be a finite number'], 400);
+    }
+
+    $chk = $pdo->prepare("SELECT id FROM parity_body_styles WHERE id=?");
+    $chk->execute([$bodyStyleId]);
+    if (!$chk->fetch()) rsa_jsonResponse(['error' => 'Body style not found'], 404);
+
+    $pdo->prepare("UPDATE parity_body_styles SET weight_modifier=? WHERE id=?")
+        ->execute([$modifier, $bodyStyleId]);
+    rsa_jsonResponse(['ok' => true, 'bodyStyleId' => $bodyStyleId, 'weightModifier' => $modifier]);
 }
 
 // ============================================================================

@@ -535,7 +535,7 @@ export default function ParityPortal() {
           setAutoRefreshStatus(prev => ({ ...prev, lastTiming: Date.now(), timingError: null }));
         }
       } catch (err: any) {
-        console.error('[autoRefresh] Divisional timing refresh failed:', err);
+        console.error('[handleAutoRefreshTiming] Divisional timing refresh failed:', err);
         setAutoRefreshStatus(prev => ({ ...prev, timingError: err.message || 'Failed' }));
       }
       return;
@@ -551,7 +551,7 @@ export default function ParityPortal() {
         setAutoRefreshStatus(prev => ({ ...prev, lastTiming: Date.now(), timingError: null }));
       }
     } catch (err: any) {
-      console.error('[autoRefresh] Timing refresh failed:', err);
+      console.error('[handleAutoRefreshTiming] Timing refresh failed:', err);
       setAutoRefreshStatus(prev => ({ ...prev, timingError: err.message || 'Failed' }));
     }
   }, [selectedEventId, selectedYear, selectedDivision, loadEvents]);
@@ -1144,7 +1144,7 @@ function EventRunsPanel({ event, category: globalCategory, classIndex: _globalCl
       setJoinedCount(res.joinedCount);
     } catch (e: any) { setError(e.message); }
     setLoading(false);
-  }, [event?.race_lookup, categoryFilter, roundFilter, laneFilter, division]);
+  }, [event?.race_lookup, categoryFilter, roundFilter, laneFilter, division, refreshKey]);
 
   const loadFlags = useCallback(async () => {
     if (!event?.race_lookup || division !== 'nationals') return;

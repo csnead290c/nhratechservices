@@ -11,6 +11,7 @@ import {
   type IncrementalComparisonResponse,
   type EventWithStats,
   type EngineComboRow,
+  type BodyStyleRow,
 } from '../services/parityApi';
 import { divApi } from '../services/divApi';
 import { useCapabilities } from '../domain/config/useCapabilities';
@@ -18,7 +19,7 @@ import { exportEventParityPdf, exportLongTermParityPdf } from '../services/parit
 import { waterGrains, pct_to_frac } from '../domain/parity/weatherCorrection';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
-  LineChart, Line, Legend,
+  LineChart, Line, Legend, ReferenceLine,
 } from 'recharts';
 void Legend;
 import {
@@ -174,7 +175,7 @@ class ParityErrorBoundary extends React.Component<
 // MAIN
 // ═════════════════════════════════════════════════════════════════════════════
 
-type Mode = 'event' | 'longTerm';
+type Mode = 'event' | 'longTerm' | 'trackCompare' | 'weightChange';
 
 export default function ParityReport({ event, events, classIndex, category, onClassChange, onDriverClick, division = 'nationals' }: {
   event: EventWithStats | null;
@@ -210,6 +211,8 @@ export default function ParityReport({ event, events, classIndex, category, onCl
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 0, borderBottom: '1px solid var(--color-border)', marginBottom: '0.5rem', alignItems: 'center' }}>
         <button style={mode === 'event' ? S.tabA : S.tabI} onClick={() => { setMode('event'); setOverrideEv(null); }}>Event Parity</button>
         <button style={mode === 'longTerm' ? S.tabA : S.tabI} onClick={() => setMode('longTerm')}>Long-Term Parity</button>
+        <button style={mode === 'trackCompare' ? S.tabA : S.tabI} onClick={() => { setMode('trackCompare'); setOverrideEv(null); }}>Track Compare</button>
+        <button style={mode === 'weightChange' ? S.tabA : S.tabI} onClick={() => setMode('weightChange')}>Weight Change</button>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--color-muted)' }}>{displayLabel}</span>
           {mode === 'event' && (
@@ -243,7 +246,11 @@ export default function ParityReport({ event, events, classIndex, category, onCl
           ? <p style={S.hint}>Select both a From and To split marker to view split data.</p>
           : mode === 'event'
             ? <EventReport event={overrideEv ? { ...(event as any), id: overrideEv } : event} events={events} eventCount={eventCount} category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} division={division} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
-            : <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+          : mode === 'longTerm'
+            ? <LongTermReport category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onEventClick={id => { setOverrideEv(id); setMode('event'); }} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+          : mode === 'trackCompare'
+            ? <TrackCompareReport event={event} events={events} category={category || classIndex} displayLabel={displayLabel} metric={effectiveMetric} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} onDriverClick={onDriverClick} division={division} splitFrom={splitFrom || undefined} splitTo={splitTo || undefined} />
+            : <WeightChangeReport event={event} category={category || classIndex} displayLabel={displayLabel} corrMode={corrMode} groupBy={groupBy} sessionScope={sessionScope} division={division} />
         }
       </ParityErrorBoundary>
     </div>
@@ -263,13 +270,18 @@ function getMetricValue(run: any, _metric: string, _splitFrom?: string, _splitTo
 // EVENT PARITY REPORT
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function EventReport({ event, events, eventCount, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick, division = 'nationals', splitFrom, splitTo }: {
-  event: EventWithStats | null; events: EventWithStats[]; eventCount: 1 | 3 | 5; category: string; displayLabel: string; metric: string;
+export function EventReport({ event, events, eventCount, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick, division = 'nationals', splitFrom, splitTo, candidatePool, titleOverride }: {
+  event: EventWithStats | null; events: EventWithStats[]; eventCount: number; category: string; displayLabel: string; metric: string;
   corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
   onDriverClick?: (driver: string, classIndex?: string) => void;
   division?: string;
   splitFrom?: string;
   splitTo?: string;
+  /** When provided, the multi-event backward-walk uses this pool instead of `events`
+   *  (used by Track Compare to restrict candidates to the same track). */
+  candidatePool?: EventWithStats[];
+  /** Optional title shown in place of the default Event Parity heading. */
+  titleOverride?: string;
 }) {
   const topN = 4;
   const [summary, setSummary] = useState<ParitySummaryResponse | null>(null);
@@ -290,8 +302,9 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
   const eventMap = useMemo(() => {
     const map = new Map<number, EventWithStats>();
     events.forEach(e => map.set(e.id, e));
+    (candidatePool ?? []).forEach(e => map.set(e.id, e));
     return map;
-  }, [events]);
+  }, [events, candidatePool]);
 
   // Load combo colors on mount
   useEffect(() => {
@@ -304,8 +317,9 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
     
     // Multi-event mode: start from current event and work backwards (across years)
     if (eventCount > 1) {
-      // Pre-filter to events that have runs, then take exactly eventCount most recent
-      const sortedWithRuns = [...events]
+      // Pre-filter to events that have runs, then take exactly eventCount most recent.
+      // candidatePool (Track Compare) restricts candidates to the same track.
+      const sortedWithRuns = [...(candidatePool ?? events)]
         .filter(e => (e.run_count ?? 0) > 0)
         .sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
       const currentIdx = sortedWithRuns.findIndex(e => e.id === event.id);
@@ -345,7 +359,7 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
         .catch(e => setErr(e instanceof Error ? e.message : typeof e === 'string' ? e : 'Failed'))
         .finally(() => setLoading(false));
     }
-  }, [event?.id, events, eventCount, category, metric, corrMode, groupBy, sessionScope, splitFrom, splitTo, division]);
+  }, [event?.id, events, candidatePool, eventCount, category, metric, corrMode, groupBy, sessionScope, splitFrom, splitTo, division]);
   useEffect(() => { load(); }, [load]);
 
   const handleExportPdf = useCallback(async () => {
@@ -569,7 +583,7 @@ export function EventReport({ event, events, eventCount, category, displayLabel,
       <div data-testid="parity-header" style={{ marginBottom: '0.5rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
           <h2 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 700, color: 'var(--color-text)' }}>
-            {evYear} {evCode} NHRA {modeLabel} Event Parity
+            {titleOverride ?? `${evYear} ${evCode} NHRA ${modeLabel} Event Parity`}
           </h2>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
             <select
@@ -1121,6 +1135,477 @@ function WeatherTable({ data }: { data: ParitySessionWeatherResponse }) {
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// TRACK COMPARE REPORT
+// Reuses EventReport's multi-event engine, but restricts the candidate pool to
+// events at the SAME track as the selected event. Lets the user compare combos
+// with the track variable removed.
+// ═════════════════════════════════════════════════════════════════════════════
+
+function TrackCompareReport({ event, events, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick, division = 'nationals', splitFrom, splitTo }: {
+  event: EventWithStats | null; events: EventWithStats[]; category: string; displayLabel: string; metric: string;
+  corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
+  onDriverClick?: (driver: string, classIndex?: string) => void;
+  division?: string;
+  splitFrom?: string;
+  splitTo?: string;
+}) {
+  const [count, setCount] = useState<number>(3);
+  const [trackEvents, setTrackEvents] = useState<EventWithStats[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  const trackId = (event as any)?.track_id as number | undefined;
+  const trackName = (event as any)?.track_name as string | undefined;
+
+  useEffect(() => {
+    if (!event || !trackId) { setTrackEvents([]); return; }
+    let cancelled = false;
+    setLoading(true); setErr('');
+    const isDiv = division !== 'nationals';
+    const fetcher = isDiv
+      // Divisional events aren't in parity_events; filter the already-loaded list by track.
+      ? Promise.resolve({ events: events.filter(e => (e as any).track_id === trackId), count: 0 })
+      : parityApi.eventsAtTrack({ trackId, category, limit: 25 });
+    Promise.resolve(fetcher)
+      .then(res => {
+        if (cancelled) return;
+        const list = [...res.events].sort((a, b) => b.start_date_local.localeCompare(a.start_date_local));
+        setTrackEvents(list);
+      })
+      .catch(e => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to load track events'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [event?.id, trackId, category, division, events]);
+
+  if (!event) return <div style={S.card}><p style={S.hint}>Select an event above.</p></div>;
+  if (!trackId) return <div style={S.card}><p style={S.hint}>Selected event has no track information.</p></div>;
+
+  // Build the comparison slice: current event + (count-1) previous events at this track.
+  const sorted = [...trackEvents].filter(e => (e.run_count ?? 0) > 0);
+  const curIdx = sorted.findIndex(e => e.id === event.id);
+  const sliced = curIdx >= 0 ? sorted.slice(curIdx, curIdx + count) : sorted.slice(0, count);
+  const availableCount = curIdx >= 0 ? sorted.length - curIdx : sorted.length;
+
+  const title = `${trackName ?? 'Track'} — Track Compare (${sliced.length} event${sliced.length === 1 ? '' : 's'})`;
+
+  return (
+    <div>
+      <div style={{ ...S.card, display: 'flex', flexWrap: 'wrap', gap: '0.75rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+        <div>
+          <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>{trackName ?? 'Track Compare'}</div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+            Comparing {displayLabel} parity at this track across recent events (track variable removed).
+          </div>
+        </div>
+        <label style={{ fontSize: '0.78rem', marginLeft: 'auto' }}>
+          Events at track:
+          <select value={count} onChange={e => setCount(Number(e.target.value))} style={{ ...S.inp, width: 64, marginLeft: 4 }}>
+            {[1, 2, 3, 4, 5].map(n => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+        <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+          {loading ? 'Loading track events…' : `${availableCount} event${availableCount === 1 ? '' : 's'} available at this track`}
+        </span>
+      </div>
+
+      {err && <div style={{ ...S.card, color: '#ef4444' }}>{err}</div>}
+
+      {sliced.length > 0 && (
+        <div style={{ ...S.card, padding: '0.4rem 0.6rem', fontSize: '0.72rem', color: 'var(--color-muted)', marginBottom: '0.5rem' }}>
+          <strong>Events in comparison:</strong>{' '}
+          {sliced.map(e => `${e.event_name} (${e.start_date_local.slice(0, 10)})`).join(' · ')}
+        </div>
+      )}
+
+      <EventReport
+        event={event}
+        events={trackEvents.length > 0 ? trackEvents : events}
+        candidatePool={trackEvents}
+        eventCount={count}
+        category={category}
+        displayLabel={displayLabel}
+        metric={metric}
+        corrMode={corrMode}
+        groupBy={groupBy}
+        sessionScope={sessionScope}
+        onDriverClick={onDriverClick}
+        division={division}
+        splitFrom={splitFrom}
+        splitTo={splitTo}
+        titleOverride={title}
+      />
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// WEIGHT CHANGE REPORT
+// What-if tool using the Drag Racing Pro Book weight formulae (Ch. 10):
+//   ET2  = ET1  * (WT1 / WT2) ^ -0.33
+//   MPH2 = MPH1 * (WT1 / WT2) ^  0.33
+// Base weights persist per engine combo; modifiers persist per body style.
+// Any nhra.parity user may edit the saved values (shared globally).
+// ═════════════════════════════════════════════════════════════════════════════
+
+const WEIGHT_EXP = 0.33; // cube-root exponent, matches HPC correction code
+
+function predictET(et1: number, wt1: number, wt2: number): number {
+  return et1 * Math.pow(wt1 / wt2, -WEIGHT_EXP);
+}
+function predictMPH(mph1: number, wt1: number, wt2: number): number {
+  return mph1 * Math.pow(wt1 / wt2, WEIGHT_EXP);
+}
+
+interface WeightComboRow {
+  engineCombo: string;
+  engineComboId: number | null;
+  et1: number | null;
+  mph1: number | null;
+}
+
+function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, sessionScope, division = 'nationals' }: {
+  event: EventWithStats | null; category: string; displayLabel: string;
+  corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
+  division?: string;
+}) {
+  void groupBy;
+  const { can } = useCapabilities();
+  const canEdit = can('nhra.parity');
+
+  const [combos, setCombos] = useState<EngineComboRow[]>([]);
+  const [bodyStyles, setBodyStyles] = useState<BodyStyleRow[]>([]);
+  const [rows, setRows] = useState<WeightComboRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Editable/persisted values keyed by id (string for input control)
+  const [baseWeights, setBaseWeights] = useState<Record<number, string>>({});
+  const [modifiers, setModifiers] = useState<Record<number, string>>({});
+  // Session-only what-if inputs
+  const [proposed, setProposed] = useState<Record<string, string>>({}); // engineCombo -> delta lbs
+  const [bodyStyleSel, setBodyStyleSel] = useState<Record<string, number | ''>>({}); // engineCombo -> bodyStyleId
+
+  const matchesCategory = useCallback((c: string | null) => {
+    if (!c) return false;
+    const norm = (s: string) => s.trim().toLowerCase();
+    return norm(c) === norm(category) || norm(c) === 'default';
+  }, [category]);
+
+  const loadStatic = useCallback(async () => {
+    try {
+      const [ecRes, bsRes] = await Promise.all([parityApi.listEngineCombos(), parityApi.listBodyStyles()]);
+      setCombos(ecRes.combos);
+      setBodyStyles(bsRes.bodyStyles);
+      const bw: Record<number, string> = {};
+      ecRes.combos.forEach(c => { bw[c.id] = c.base_weight != null ? String(c.base_weight) : ''; });
+      setBaseWeights(bw);
+      const md: Record<number, string> = {};
+      bsRes.bodyStyles.forEach(b => { md[b.id] = String(b.weight_modifier ?? 0); });
+      setModifiers(md);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to load combos/body styles');
+    }
+  }, []);
+
+  useEffect(() => { loadStatic(); }, [loadStatic]);
+
+  // Load current best ET/MPH per engine combo for the selected event/category
+  const loadSummary = useCallback(async () => {
+    if (!event) { setRows([]); return; }
+    setLoading(true); setErr('');
+    try {
+      const isDiv = division !== 'nationals';
+      const summary = isDiv
+        ? await divApi.divParitySummary({ eventId: event.id, category, metric: 'et_1320', mode: corrMode, topN: 4, sessionScope, groupBy: 'engineCombo' })
+        : await parityApi.paritySummary({ eventId: event.id, category, metric: 'et_1320', mode: corrMode, topN: 4, sessionScope, groupBy: 'engineCombo' });
+      const next: WeightComboRow[] = summary.combos.map(c => {
+        const best = c.topRuns && c.topRuns.length > 0 ? c.topRuns[0] : null;
+        return {
+          engineCombo: c.engineCombo,
+          engineComboId: c.engineComboId ?? null,
+          et1: best?.et ?? null,
+          mph1: best?.mph ?? null,
+        };
+      });
+      setRows(next);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to load parity data');
+    } finally {
+      setLoading(false);
+    }
+  }, [event?.id, category, corrMode, sessionScope, division]);
+
+  useEffect(() => { loadSummary(); }, [loadSummary]);
+
+  const comboByName = useMemo(() => {
+    const m = new Map<string, EngineComboRow>();
+    combos.forEach(c => m.set(c.name, c));
+    return m;
+  }, [combos]);
+
+  const categoryCombos = useMemo(() => combos.filter(c => matchesCategory(c.category)), [combos, matchesCategory]);
+  const categoryBodyStyles = useMemo(() => bodyStyles.filter(b => matchesCategory(b.category)), [bodyStyles, matchesCategory]);
+
+  const saveBaseWeight = useCallback(async (comboId: number, raw: string) => {
+    const val = raw.trim() === '' ? null : Number(raw);
+    if (val != null && (!isFinite(val) || val < 0)) return;
+    try {
+      await parityApi.setComboBaseWeight({ comboId, baseWeight: val });
+      setCombos(prev => prev.map(c => c.id === comboId ? { ...c, base_weight: val } : c));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save base weight');
+    }
+  }, []);
+
+  const saveModifier = useCallback(async (bodyStyleId: number, raw: string) => {
+    const val = raw.trim() === '' ? 0 : Number(raw);
+    if (!isFinite(val)) return;
+    try {
+      await parityApi.setBodyStyleWeightModifier({ bodyStyleId, weightModifier: val });
+      setBodyStyles(prev => prev.map(b => b.id === bodyStyleId ? { ...b, weight_modifier: val } : b));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to save modifier');
+    }
+  }, []);
+
+  // Build predictions per engine combo row
+  const predictions = useMemo(() => {
+    return rows.map(r => {
+      const combo = r.engineComboId != null
+        ? combos.find(c => c.id === r.engineComboId)
+        : comboByName.get(r.engineCombo);
+      const base = combo?.base_weight ?? null;
+      const bsId = combo ? bodyStyleSel[r.engineCombo] : '';
+      const bsMod = bsId ? (bodyStyles.find(b => b.id === bsId)?.weight_modifier ?? 0) : 0;
+      const wt1 = base != null ? base + bsMod : null;
+      const deltaRaw = proposed[r.engineCombo];
+      const delta = deltaRaw && deltaRaw.trim() !== '' ? Number(deltaRaw) : 0;
+      const wt2 = wt1 != null && isFinite(delta) ? wt1 + delta : null;
+      const valid = wt1 != null && wt2 != null && wt1 > 0 && wt2 > 0;
+      const et2 = valid && r.et1 != null ? predictET(r.et1, wt1, wt2) : null;
+      const mph2 = valid && r.mph1 != null ? predictMPH(r.mph1, wt1, wt2) : null;
+      return {
+        ...r, comboId: combo?.id ?? null, base, bsMod, wt1, wt2, delta,
+        et2, mph2,
+        etDelta: et2 != null && r.et1 != null ? et2 - r.et1 : null,
+        mphDelta: mph2 != null && r.mph1 != null ? mph2 - r.mph1 : null,
+        hasBase: base != null,
+      };
+    });
+  }, [rows, combos, comboByName, bodyStyles, bodyStyleSel, proposed]);
+
+  // Re-ranked parity: order by predicted ET (quicker = better); fall back to current ET
+  const currentRank = useMemo(
+    () => [...predictions].filter(p => p.et1 != null).sort((a, b) => (a.et1! - b.et1!)),
+    [predictions]
+  );
+  const predictedRank = useMemo(
+    () => [...predictions].filter(p => (p.et2 ?? p.et1) != null).sort((a, b) => ((a.et2 ?? a.et1!) - (b.et2 ?? b.et1!))),
+    [predictions]
+  );
+  const currentSpread = useMemo(() => {
+    const vals = currentRank.map(p => p.et1!).filter(v => v != null);
+    return vals.length >= 2 ? Math.max(...vals) - Math.min(...vals) : null;
+  }, [currentRank]);
+  const predictedSpread = useMemo(() => {
+    const vals = predictedRank.map(p => (p.et2 ?? p.et1)!).filter(v => v != null);
+    return vals.length >= 2 ? Math.max(...vals) - Math.min(...vals) : null;
+  }, [predictedRank]);
+
+  if (!event) return <div style={S.card}><p style={S.hint}>Select an event above to model weight changes.</p></div>;
+
+  const deltaStyle = (d: number | null, lowerBetter: boolean): React.CSSProperties => {
+    if (d == null || Math.abs(d) < 1e-9) return { color: 'var(--color-muted)' };
+    const improved = lowerBetter ? d < 0 : d > 0;
+    return { color: improved ? '#16a34a' : '#dc2626', fontWeight: 600 };
+  };
+  const fmtDelta = (d: number | null, dec: number) => d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(dec)}`;
+
+  return (
+    <div>
+      <div style={{ ...S.card, marginBottom: '0.5rem' }}>
+        <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Weight Change — {displayLabel}</div>
+        <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
+          Predicts ET &amp; MPH changes using the Drag Racing Pro Book formula
+          (ET₂ = ET₁ × (WT₁/WT₂)<sup>-0.33</sup>, MPH₂ = MPH₁ × (WT₁/WT₂)<sup>0.33</sup>).
+          Base weights and body-style modifiers are saved and shared for all users.
+        </div>
+      </div>
+
+      {err && <div style={{ ...S.card, color: '#ef4444' }}>{err}</div>}
+      {!canEdit && <div style={{ ...S.card, fontSize: '0.72rem', color: '#92400e', background: '#fef3c7' }}>You can run what-if scenarios but lack the nhra.parity capability needed to save base weights / modifiers.</div>}
+
+      <div style={S.grid2}>
+        {/* Base weights editor */}
+        <div style={S.card}>
+          <div style={SS.secHead}>Base Weights — Engine Combos</div>
+          {categoryCombos.length === 0
+            ? <p style={S.hint}>No engine combos defined for {displayLabel}.</p>
+            : (
+              <table style={SS.tbl}>
+                <thead><tr><th style={SS.th}>Engine Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>Base Weight (lbs)</th></tr></thead>
+                <tbody>
+                  {categoryCombos.map(c => (
+                    <tr key={c.id}>
+                      <td style={SS.td}><span style={S.badge(comboColor(c.name))}>{c.name}</span></td>
+                      <td style={{ ...SS.td, textAlign: 'right' }}>
+                        <input
+                          type="number" disabled={!canEdit}
+                          value={baseWeights[c.id] ?? ''}
+                          onChange={e => setBaseWeights(prev => ({ ...prev, [c.id]: e.target.value }))}
+                          onBlur={e => canEdit && saveBaseWeight(c.id, e.target.value)}
+                          style={{ ...S.inp, width: 90, textAlign: 'right' }}
+                          placeholder="—"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+        </div>
+
+        {/* Body style modifiers editor */}
+        <div style={S.card}>
+          <div style={SS.secHead}>Body Style Modifiers</div>
+          {categoryBodyStyles.length === 0
+            ? <p style={S.hint}>No body styles defined for {displayLabel}.</p>
+            : (
+              <table style={SS.tbl}>
+                <thead><tr><th style={SS.th}>Body Style</th><th style={{ ...SS.th, textAlign: 'right' }}>Modifier (lbs)</th></tr></thead>
+                <tbody>
+                  {categoryBodyStyles.map(b => (
+                    <tr key={b.id}>
+                      <td style={SS.td}>{b.name}</td>
+                      <td style={{ ...SS.td, textAlign: 'right' }}>
+                        <input
+                          type="number" disabled={!canEdit}
+                          value={modifiers[b.id] ?? '0'}
+                          onChange={e => setModifiers(prev => ({ ...prev, [b.id]: e.target.value }))}
+                          onBlur={e => canEdit && saveModifier(b.id, e.target.value)}
+                          style={{ ...S.inp, width: 90, textAlign: 'right' }}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+        </div>
+      </div>
+
+      {/* What-if predictions */}
+      <div style={S.card}>
+        <div style={SS.secHead}>Proposed Weight Change — Predicted Effect per Combo</div>
+        {loading ? <p style={S.hint}>Loading current ET / MPH…</p>
+          : rows.length === 0 ? <p style={S.hint}>No combo data for this event/category.</p>
+          : (
+            <table style={SS.tbl}>
+              <thead>
+                <tr>
+                  <th style={SS.th}>Engine Combo</th>
+                  <th style={SS.th}>Body Style (opt)</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Cur WT</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ Weight</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>New WT</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>ET (cur→new)</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ ET</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>MPH (cur→new)</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ MPH</th>
+                </tr>
+              </thead>
+              <tbody>
+                {predictions.map(p => (
+                  <tr key={p.engineCombo}>
+                    <td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td>
+                    <td style={SS.td}>
+                      <select
+                        value={bodyStyleSel[p.engineCombo] ?? ''}
+                        onChange={e => setBodyStyleSel(prev => ({ ...prev, [p.engineCombo]: e.target.value === '' ? '' : Number(e.target.value) }))}
+                        style={{ ...S.inp, width: 130 }}
+                      >
+                        <option value="">— none —</option>
+                        {categoryBodyStyles.map(b => (
+                          <option key={b.id} value={b.id}>{b.name} ({b.weight_modifier > 0 ? '+' : ''}{b.weight_modifier})</option>
+                        ))}
+                      </select>
+                    </td>
+                    <td style={{ ...SS.td, textAlign: 'right' }}>
+                      {p.hasBase ? p.wt1!.toFixed(0) : <span style={S.nd} title="Set a base weight for this combo">set base</span>}
+                    </td>
+                    <td style={{ ...SS.td, textAlign: 'right' }}>
+                      <input
+                        type="number"
+                        value={proposed[p.engineCombo] ?? ''}
+                        onChange={e => setProposed(prev => ({ ...prev, [p.engineCombo]: e.target.value }))}
+                        style={{ ...S.inp, width: 70, textAlign: 'right' }}
+                        placeholder="0"
+                      />
+                    </td>
+                    <td style={{ ...SS.td, textAlign: 'right' }}>{p.wt2 != null ? p.wt2.toFixed(0) : '—'}</td>
+                    <td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et1)} → {formatET(p.et2)}</td>
+                    <td style={{ ...SS.td, textAlign: 'right', ...deltaStyle(p.etDelta, true) }}>{fmtDelta(p.etDelta, 3)}</td>
+                    <td style={{ ...SS.td, textAlign: 'right' }}>{formatMPH(p.mph1)} → {formatMPH(p.mph2)}</td>
+                    <td style={{ ...SS.td, textAlign: 'right', ...deltaStyle(p.mphDelta, false) }}>{fmtDelta(p.mphDelta, 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+      </div>
+
+      {/* Re-ranked parity comparison */}
+      {!loading && rows.length > 0 && (
+        <div style={S.card}>
+          <div style={SS.secHead}>Re-Ranked Parity (by ET — quicker is better)</div>
+          <div style={S.grid2}>
+            <div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 4 }}>Current</div>
+              <table style={SS.tbl}>
+                <thead><tr><th style={SS.th}>#</th><th style={SS.th}>Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>ET</th></tr></thead>
+                <tbody>
+                  {currentRank.map((p, i) => (
+                    <tr key={p.engineCombo}><td style={SS.td}>{i + 1}</td><td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td><td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et1)}</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', marginTop: 4 }}>Spread: {currentSpread != null ? currentSpread.toFixed(3) : '—'} s</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 4 }}>After Proposed Change</div>
+              <table style={SS.tbl}>
+                <thead><tr><th style={SS.th}>#</th><th style={SS.th}>Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>ET</th></tr></thead>
+                <tbody>
+                  {predictedRank.map((p, i) => {
+                    const prevIdx = currentRank.findIndex(c => c.engineCombo === p.engineCombo);
+                    const moved = prevIdx >= 0 ? prevIdx - i : 0;
+                    return (
+                      <tr key={p.engineCombo}>
+                        <td style={SS.td}>{i + 1}{moved !== 0 && <span style={{ fontSize: '0.65rem', marginLeft: 3, color: moved > 0 ? '#16a34a' : '#dc2626' }}>{moved > 0 ? `▲${moved}` : `▼${-moved}`}</span>}</td>
+                        <td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td>
+                        <td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et2 ?? p.et1)}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', marginTop: 4 }}>
+                Spread: {predictedSpread != null ? predictedSpread.toFixed(3) : '—'} s
+                {currentSpread != null && predictedSpread != null && (
+                  <span style={{ marginLeft: 6, ...deltaStyle(predictedSpread - currentSpread, true) }}>
+                    ({fmtDelta(predictedSpread - currentSpread, 3)} s {predictedSpread < currentSpread ? 'tighter' : 'wider'})
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // LONG-TERM PARITY REPORT
 // ═════════════════════════════════════════════════════════════════════════════
 
@@ -1142,7 +1627,10 @@ function LongTermReport({ category, displayLabel, metric, corrMode, groupBy, ses
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
   const [exporting, setExporting] = useState(false);
-  const [unified, setUnified] = useState(true);
+  // Default unified to false for classes that don't have divisionals
+  const NON_DIVISIONAL_CATS = ['top fuel', 'funny car', 'pro stock', 'pro stock motorcycle', 'pro mod'];
+  const isNonDivisional = NON_DIVISIONAL_CATS.includes(category.toLowerCase());
+  const [unified, setUnified] = useState(!isNonDivisional);
 
   const rangeFn = useMemo(
     () => unified ? parityApi.rangeParityMatrixUnified.bind(parityApi) : parityApi.rangeParityMatrix.bind(parityApi),
@@ -1519,14 +2007,61 @@ function PrintStyle() {
   return <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />;
 }
 
+// Custom tooltip showing delta values from hovered point
+function CustomTooltip({ active, payload, label, metric, visibleCombos, hoveredPoint, isLowerBetter }: any) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  // Calculate the "best" value (quickest for ET, fastest for MPH) as reference for deltas
+  const values = hoveredPoint != null
+    ? visibleCombos
+        .map((c: string) => hoveredPoint[c])
+        .filter((v: any) => v != null && !isNaN(v)) as number[]
+    : [];
+  const baseValue = values.length > 0
+    ? (isLowerBetter ? Math.min(...values) : Math.max(...values))
+    : undefined;
+
+  return (
+    <div style={{ background: 'var(--color-surface, #1e1e2e)', border: '1px solid var(--color-border, #444)', borderRadius: 4, padding: '8px 12px', fontSize: '0.75rem' }}>
+      <div style={{ fontWeight: 600, marginBottom: 4, color: 'var(--color-text, #e0e0e0)' }}>{label}</div>
+      {payload
+        .filter((p: any) => p.value != null && visibleCombos.includes(p.dataKey))
+        .map((p: any) => {
+          const val = p.value as number;
+          const delta = baseValue != null ? val - baseValue : null;
+          // formatDelta already includes + sign, don't add another
+          const deltaStr = delta != null ? formatDelta(delta, metric) : '';
+          // For ET (isLowerBetter): positive delta = slower = red, negative = faster = green
+          // For MPH: positive delta = faster = green, negative = slower = red
+          const isPositiveSlower = isLowerBetter;
+          const deltaColor = delta != null
+            ? (delta > 0 ? (isPositiveSlower ? '#f87171' : '#34d399') : (delta < 0 ? (isPositiveSlower ? '#34d399' : '#f87171') : '#9ca3af'))
+            : '#9ca3af';
+          return (
+            <div key={p.dataKey} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
+              <span style={{ color: p.color }}>●</span>
+              <span style={{ color: 'var(--color-text, #e0e0e0)' }}>{p.dataKey}:</span>
+              <span style={{ fontWeight: 500 }}>{formatMetric(val, metric)}</span>
+              {deltaStr && <span style={{ color: deltaColor, fontSize: '0.7rem' }}>({deltaStr})</span>}
+            </div>
+          );
+        })}
+    </div>
+  );
+}
+
 function RangeLineChart({ chartData, combos, metric }: { chartData: Record<string, any>[]; combos: string[]; metric: string }) {
   const [hiddenCombos, setHiddenCombos] = useState<Set<string>>(new Set());
   const [yMinStr, setYMinStr] = useState('');
   const [yMaxStr, setYMaxStr] = useState('');
+  // Use refs for hover state to avoid chart re-renders on mouse movement
+  const hoveredIndexRef = useRef<number | null>(null);
+  const [, forceUpdate] = useState(0);
 
   if (chartData.length === 0) return <p style={S.hint}>No data.</p>;
 
   const visibleCombos = combos.filter(c => !hiddenCombos.has(c));
+  const isLowerBetter = !metric.includes('mph');
 
   // Compute Y domain from VISIBLE series only — so a hidden outlier doesn't collapse the scale
   const visibleValues = chartData.flatMap(pt =>
@@ -1549,6 +2084,35 @@ function RangeLineChart({ chartData, combos, metric }: { chartData: Record<strin
   };
 
   const hasCustomScale = yMinStr !== '' || yMaxStr !== '';
+
+  // Get the hovered point data - calculate "best" value (quickest for ET, fastest for MPH)
+  const hoveredPoint = hoveredIndexRef.current != null ? chartData[hoveredIndexRef.current] : null;
+  const hoveredY = useMemo(() => {
+    if (hoveredPoint == null) return undefined;
+    const values = visibleCombos
+      .map(c => hoveredPoint[c])
+      .filter(v => v != null && !isNaN(v)) as number[];
+    if (values.length === 0) return undefined;
+    // For ET: return the quickest (smallest), for MPH: return the fastest (largest)
+    return isLowerBetter ? Math.min(...values) : Math.max(...values);
+  }, [hoveredPoint, visibleCombos, isLowerBetter]);
+
+  // Find nearest data point on mouse move - use refs to avoid re-renders
+  const handleMouseMove = useCallback((state: any) => {
+    const newIndex = state?.activeTooltipIndex ?? null;
+    if (newIndex !== hoveredIndexRef.current) {
+      hoveredIndexRef.current = newIndex;
+      // Only force tooltip update, not full chart re-render
+      forceUpdate(v => v + 1);
+    }
+  }, []);
+
+  const handleMouseLeave = useCallback(() => {
+    if (hoveredIndexRef.current !== null) {
+      hoveredIndexRef.current = null;
+      forceUpdate(v => v + 1);
+    }
+  }, []);
 
   return (
     <div style={{ ...S.card, padding: '0.5rem' }}>
@@ -1581,15 +2145,32 @@ function RangeLineChart({ chartData, combos, metric }: { chartData: Record<strin
         <span style={{ marginLeft: 'auto', fontSize: '0.62rem', opacity: 0.6 }}>Click legend to hide/show series</span>
       </div>
       <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={chartData} margin={{ top: 8, right: 20, left: 0, bottom: 8 }}>
+        <LineChart data={chartData} margin={{ top: 8, right: 20, left: 0, bottom: 8 }} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}>
           <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
           <XAxis dataKey="name" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={60} />
           <YAxis tick={{ fontSize: 10 }} domain={[yMin, yMax]} allowDataOverflow tickFormatter={v => formatMetric(v, metric)} width={54} />
-          <Tooltip formatter={(v: number) => v != null ? formatMetric(v, metric) : '—'} />
+          <Tooltip
+            content={(props: any) => (
+              <CustomTooltip
+                {...props}
+                metric={metric}
+                visibleCombos={visibleCombos}
+                hoveredPoint={hoveredPoint}
+                isLowerBetter={isLowerBetter}
+              />
+            )}
+          />
           <Legend wrapperStyle={{ fontSize: '0.68rem', cursor: 'pointer' }} onClick={toggleCombo} />
+          <ReferenceLine
+            y={hoveredY ?? yMin - 1}
+            stroke="#ffffff"
+            strokeDasharray="4 4"
+            strokeOpacity={hoveredY != null && hoveredY >= yMin && hoveredY <= yMax ? 0.8 : 0}
+            ifOverflow="hidden"
+          />
           {combos.map(c => (
             <Line key={c} type="monotone" dataKey={c} stroke={comboColor(c)}
-              dot={{ r: 3 }} strokeWidth={2} connectNulls hide={hiddenCombos.has(c)} />
+              dot={{ r: 3 }} strokeWidth={2} hide={hiddenCombos.has(c)} />
           ))}
         </LineChart>
       </ResponsiveContainer>

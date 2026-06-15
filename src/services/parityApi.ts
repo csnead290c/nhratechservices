@@ -796,6 +796,7 @@ export interface EngineComboRow {
   fuel_type: string;
   uses_n2o: boolean;
   color_hex: string | null;
+  base_weight: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -816,6 +817,7 @@ export interface BodyStyleRow {
   lift_coef: number;
   overhang_in: number;
   color_hex: string | null;
+  weight_modifier: number;
   created_at: string;
   updated_at: string;
 }
@@ -2584,6 +2586,14 @@ export const parityApi = {
     });
   },
 
+  // Set a shared base weight on an engine combo (any nhra.parity user).
+  async setComboBaseWeight(params: { comboId: number; baseWeight: number | null }): Promise<{ ok: boolean; comboId: number; baseWeight: number | null }> {
+    return parityRequest<{ ok: boolean; comboId: number; baseWeight: number | null }>('/parity.php?action=setComboBaseWeight', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
   // ── Body Style endpoints ──────────────────────────────────────────────
 
   async listBodyStyles(): Promise<BodyStyleListResponse> {
@@ -2602,6 +2612,24 @@ export const parityApi = {
       method: 'POST',
       body: JSON.stringify({ id }),
     });
+  },
+
+  // Set a shared weight modifier on a body style (any nhra.parity user).
+  async setBodyStyleWeightModifier(params: { bodyStyleId: number; weightModifier: number }): Promise<{ ok: boolean; bodyStyleId: number; weightModifier: number }> {
+    return parityRequest<{ ok: boolean; bodyStyleId: number; weightModifier: number }>('/parity.php?action=setBodyStyleWeightModifier', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  },
+
+  // Events at the same track (across years) that have runs for the category.
+  async eventsAtTrack(params: { trackId: number; category?: string; limit?: number }): Promise<EventsWithStatsResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'eventsAtTrack');
+    qs.set('trackId', String(params.trackId));
+    if (params.category) qs.set('category', params.category);
+    if (params.limit) qs.set('limit', String(params.limit));
+    return parityRequest<EventsWithStatsResponse>(`/parity.php?${qs.toString()}`);
   },
 
   // ── Driver Body Style endpoints ────────────────────────────────────────
