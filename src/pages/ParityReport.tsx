@@ -12,6 +12,7 @@ import {
   type EventWithStats,
   type EngineComboRow,
   type BodyStyleRow,
+  type WeightChangeParityResponse,
 } from '../services/parityApi';
 import { divApi } from '../services/divApi';
 import { useCapabilities } from '../domain/config/useCapabilities';
@@ -1141,6 +1142,87 @@ function WeatherTable({ data }: { data: ParitySessionWeatherResponse }) {
 // with the track variable removed.
 // ═════════════════════════════════════════════════════════════════════════════
 
+/** Long-Term-style progression charts (quickest + quickest-4-avg per group) across a
+ *  specific set of events — used by Track Compare to visualize progression at one track. */
+function TrackProgressionCharts({ events, category, groupBy, corrMode, sessionScope, metric }: {
+  events: EventWithStats[]; category: string;
+  groupBy: 'engineCombo' | 'bodyStyle'; corrMode: 'raw' | 'corrected';
+  sessionScope: 'qual' | 'elim' | 'both'; metric: string;
+}) {
+  const [matrix, setMatrix] = useState<Record<number, Record<string, { best: number | null; avgTopN: number | null }>>>({});
+  const [combos, setCombos] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Chronological order for the X-axis
+  const orderedEvents = useMemo(
+    () => [...events].sort((a, b) => a.start_date_local.localeCompare(b.start_date_local)),
+    [events]
+  );
+  const eventIdsKey = orderedEvents.map(e => e.id).join(',');
+
+  useEffect(() => {
+    if (orderedEvents.length === 0) { setMatrix({}); setCombos([]); return; }
+    let cancelled = false;
+    setLoading(true); setErr('');
+    Promise.allSettled(orderedEvents.map(ev =>
+      parityApi.paritySummary({ eventId: ev.id, category, metric, mode: corrMode, topN: 4, sessionScope, groupBy })
+        .then(res => ({ ev, res }))
+    )).then(settled => {
+      if (cancelled) return;
+      const mx: Record<number, Record<string, { best: number | null; avgTopN: number | null }>> = {};
+      const comboSet = new Set<string>();
+      let anyOk = false;
+      for (const s of settled) {
+        if (s.status !== 'fulfilled') continue;
+        anyOk = true;
+        const { ev, res } = s.value;
+        mx[ev.id] = {};
+        res.combos.forEach(c => {
+          if (c.engineCombo === 'Unknown') return;
+          comboSet.add(c.engineCombo);
+          mx[ev.id][c.engineCombo] = { best: c.bestValue, avgTopN: c.avgTopN };
+        });
+      }
+      if (!anyOk) setErr('Could not load progression data for these events.');
+      setMatrix(mx);
+      setCombos([...comboSet]);
+    }).finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventIdsKey, category, groupBy, corrMode, sessionScope, metric]);
+
+  if (orderedEvents.length === 0) return null;
+
+  const evLabels = orderedEvents.map(ev => eventShortCode(ev as any));
+  const bestChartData = orderedEvents.map((ev, i) => {
+    const pt: Record<string, any> = { name: evLabels[i] };
+    for (const c of combos) pt[c] = matrix[ev.id]?.[c]?.best ?? null;
+    return pt;
+  });
+  const avg4ChartData = orderedEvents.map((ev, i) => {
+    const pt: Record<string, any> = { name: evLabels[i] };
+    for (const c of combos) pt[c] = matrix[ev.id]?.[c]?.avgTopN ?? null;
+    return pt;
+  });
+  const grpLabel = groupBy === 'bodyStyle' ? 'Body Style' : 'Engine Combo';
+
+  return (
+    <div style={{ marginTop: '0.5rem' }}>
+      {err && <div style={{ ...S.card, color: '#ef4444' }}>{err}</div>}
+      {loading && <p style={{ ...S.hint, opacity: 0.7 }}>Loading progression…</p>}
+      {combos.length > 0 && (
+        <>
+          <div style={SS.secHead}>Quickest Run Per {grpLabel} — Progression ({orderedEvents.length} events)</div>
+          <RangeLineChart chartData={bestChartData} combos={combos} metric={metric} />
+          <div style={SS.secHead}>Average 4 Quickest Per {grpLabel} — Progression ({orderedEvents.length} events)</div>
+          <RangeLineChart chartData={avg4ChartData} combos={combos} metric={metric} />
+        </>
+      )}
+    </div>
+  );
+}
+
 function TrackCompareReport({ event, events, category, displayLabel, metric, corrMode, groupBy, sessionScope, onDriverClick, division = 'nationals', splitFrom, splitTo }: {
   event: EventWithStats | null; events: EventWithStats[]; category: string; displayLabel: string; metric: string;
   corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
@@ -1234,33 +1316,104 @@ function TrackCompareReport({ event, events, category, displayLabel, metric, cor
         splitTo={splitTo}
         titleOverride={title}
       />
+
+      {/* Long-Term-style progression charts across this track's events */}
+      {division === 'nationals' && sliced.length > 0 && (
+        <div style={{ ...S.card }}>
+          <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-text)', marginBottom: '0.25rem' }}>
+            Progression at {trackName ?? 'this track'}
+          </div>
+          <TrackProgressionCharts
+            events={sliced}
+            category={category}
+            groupBy={groupBy}
+            corrMode={corrMode}
+            sessionScope={sessionScope}
+            metric={metric}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
 // WEIGHT CHANGE REPORT
-// What-if tool using the Drag Racing Pro Book weight formulae (Ch. 10):
-//   ET2  = ET1  * (WT1 / WT2) ^ -0.33
-//   MPH2 = MPH1 * (WT1 / WT2) ^  0.33
+// What-if tool using the Drag Racing Pro Book weight formula (Ch. 10):
+//   ET2 = ET1 * (WT1 / WT2) ^ -0.33
+// Each car's weight = its engine-combo base weight + its body-style modifier
+// (resolved from actual driver assignments). Proposed weights are applied per
+// run on the backend (action=weightChangeParity), every run's ET recomputed,
+// quickest runs re-found, and quickest + quickest-4-avg re-aggregated per group.
 // Base weights persist per engine combo; modifiers persist per body style.
-// Any nhra.parity user may edit the saved values (shared globally).
 // ═════════════════════════════════════════════════════════════════════════════
 
-const WEIGHT_EXP = 0.33; // cube-root exponent, matches HPC correction code
+/** Comparison table + line chart for one metric (quickest or avg-4), current vs proposed. */
+function WeightCompareSection({ title, groupLabel, groups, accessor }: {
+  title: string;
+  groupLabel: string;
+  groups: WeightChangeParityResponse['groups'];
+  accessor: (g: WeightChangeParityResponse['groups'][number]) => { current: number | null; proposed: number | null };
+}) {
+  const rows = groups
+    .map(g => ({ group: g.group, ...accessor(g) }))
+    .filter(r => r.current != null || r.proposed != null);
+  if (rows.length === 0) return null;
 
-function predictET(et1: number, wt1: number, wt2: number): number {
-  return et1 * Math.pow(wt1 / wt2, -WEIGHT_EXP);
-}
-function predictMPH(mph1: number, wt1: number, wt2: number): number {
-  return mph1 * Math.pow(wt1 / wt2, WEIGHT_EXP);
-}
+  // Sort by current (quicker = lower ET first; nulls last)
+  const sorted = [...rows].sort((a, b) => {
+    if (a.current == null) return 1;
+    if (b.current == null) return -1;
+    return a.current - b.current;
+  });
 
-interface WeightComboRow {
-  engineCombo: string;
-  engineComboId: number | null;
-  et1: number | null;
-  mph1: number | null;
+  const chartData = sorted.map(r => ({ name: r.group, Current: r.current, Proposed: r.proposed }));
+  const allVals = sorted.flatMap(r => [r.current, r.proposed].filter((v): v is number => v != null));
+  const yMin = allVals.length ? Math.min(...allVals) : 0;
+  const yMax = allVals.length ? Math.max(...allVals) : 1;
+  const pad = (yMax - yMin) * 0.08 || 0.05;
+
+  const fmtSecDelta = (d: number | null) => d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(3)}`;
+  const deltaColor = (d: number | null): React.CSSProperties =>
+    d == null || Math.abs(d) < 1e-9 ? { color: 'var(--color-muted)' } : { color: d < 0 ? '#16a34a' : '#dc2626', fontWeight: 600 };
+
+  return (
+    <div style={{ ...S.card, marginTop: '0.5rem' }}>
+      <div style={SS.secHead}>{title}</div>
+      <table style={SS.tbl}>
+        <thead><tr>
+          <th style={SS.th}>{groupLabel}</th>
+          <th style={{ ...SS.th, textAlign: 'right' }}>Current</th>
+          <th style={{ ...SS.th, textAlign: 'right' }}>Proposed</th>
+          <th style={{ ...SS.th, textAlign: 'right' }}>Δ</th>
+        </tr></thead>
+        <tbody>
+          {sorted.map((r, i) => {
+            const d = r.current != null && r.proposed != null ? r.proposed - r.current : null;
+            return (
+              <tr key={r.group} style={{ background: i % 2 === 1 ? 'var(--color-bg)' : undefined }}>
+                <td style={SS.td}><span style={S.badge(comboColor(r.group))}>{r.group}</span></td>
+                <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace' }}>{formatET(r.current)}</td>
+                <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace' }}>{formatET(r.proposed)}</td>
+                <td style={{ ...SS.td, textAlign: 'right', fontFamily: 'monospace', ...deltaColor(d) }}>{fmtSecDelta(d)}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <ResponsiveContainer width="100%" height={260}>
+        <LineChart data={chartData} margin={{ top: 8, right: 20, left: 0, bottom: 40 }}>
+          <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+          <XAxis dataKey="name" tick={{ fontSize: 9 }} angle={-30} textAnchor="end" height={70} interval={0} />
+          <YAxis tick={{ fontSize: 10 }} domain={[yMin - pad, yMax + pad]} allowDataOverflow tickFormatter={v => formatET(v)} width={56} />
+          <Tooltip formatter={(v: number) => v != null ? formatET(v) : '—'} />
+          <Legend wrapperStyle={{ fontSize: '0.68rem' }} />
+          <Line type="monotone" dataKey="Current" stroke="#9ca3af" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+          <Line type="monotone" dataKey="Proposed" stroke="#3b82f6" strokeWidth={2} dot={{ r: 3 }} connectNulls />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
 }
 
 function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, sessionScope, division = 'nationals' }: {
@@ -1268,27 +1421,26 @@ function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, 
   corrMode: 'raw' | 'corrected'; groupBy: 'engineCombo' | 'bodyStyle'; sessionScope: 'qual' | 'elim' | 'both';
   division?: string;
 }) {
-  void groupBy;
   const { can } = useCapabilities();
   const canEdit = can('nhra.parity');
 
   const [combos, setCombos] = useState<EngineComboRow[]>([]);
   const [bodyStyles, setBodyStyles] = useState<BodyStyleRow[]>([]);
-  const [rows, setRows] = useState<WeightComboRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState('');
+  const [result, setResult] = useState<WeightChangeParityResponse | null>(null);
 
-  // Editable/persisted values keyed by id (string for input control)
+  // Official (saved) values keyed by id (string for input control)
   const [baseWeights, setBaseWeights] = useState<Record<number, string>>({});
   const [modifiers, setModifiers] = useState<Record<number, string>>({});
-  // Session-only what-if inputs
-  const [proposed, setProposed] = useState<Record<string, string>>({}); // engineCombo -> delta lbs
-  const [bodyStyleSel, setBodyStyleSel] = useState<Record<string, number | ''>>({}); // engineCombo -> bodyStyleId
+  // Proposed what-if values keyed by id (default to official on load)
+  const [propBase, setPropBase] = useState<Record<number, string>>({});
+  const [propMod, setPropMod] = useState<Record<number, string>>({});
 
-  const matchesCategory = useCallback((c: string | null) => {
+  // Strict category match (matches Admin > Body Styles and the Combo Tuner)
+  const sameCategory = useCallback((c: string | null) => {
     if (!c) return false;
-    const norm = (s: string) => s.trim().toLowerCase();
-    return norm(c) === norm(category) || norm(c) === 'default';
+    return c.trim().toLowerCase() === category.trim().toLowerCase();
   }, [category]);
 
   const loadStatic = useCallback(async () => {
@@ -1299,9 +1451,11 @@ function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, 
       const bw: Record<number, string> = {};
       ecRes.combos.forEach(c => { bw[c.id] = c.base_weight != null ? String(c.base_weight) : ''; });
       setBaseWeights(bw);
+      setPropBase(bw);
       const md: Record<number, string> = {};
       bsRes.bodyStyles.forEach(b => { md[b.id] = String(b.weight_modifier ?? 0); });
       setModifiers(md);
+      setPropMod(md);
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to load combos/body styles');
     }
@@ -1309,42 +1463,8 @@ function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, 
 
   useEffect(() => { loadStatic(); }, [loadStatic]);
 
-  // Load current best ET/MPH per engine combo for the selected event/category
-  const loadSummary = useCallback(async () => {
-    if (!event) { setRows([]); return; }
-    setLoading(true); setErr('');
-    try {
-      const isDiv = division !== 'nationals';
-      const summary = isDiv
-        ? await divApi.divParitySummary({ eventId: event.id, category, metric: 'et_1320', mode: corrMode, topN: 4, sessionScope, groupBy: 'engineCombo' })
-        : await parityApi.paritySummary({ eventId: event.id, category, metric: 'et_1320', mode: corrMode, topN: 4, sessionScope, groupBy: 'engineCombo' });
-      const next: WeightComboRow[] = summary.combos.map(c => {
-        const best = c.topRuns && c.topRuns.length > 0 ? c.topRuns[0] : null;
-        return {
-          engineCombo: c.engineCombo,
-          engineComboId: c.engineComboId ?? null,
-          et1: best?.et ?? null,
-          mph1: best?.mph ?? null,
-        };
-      });
-      setRows(next);
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Failed to load parity data');
-    } finally {
-      setLoading(false);
-    }
-  }, [event?.id, category, corrMode, sessionScope, division]);
-
-  useEffect(() => { loadSummary(); }, [loadSummary]);
-
-  const comboByName = useMemo(() => {
-    const m = new Map<string, EngineComboRow>();
-    combos.forEach(c => m.set(c.name, c));
-    return m;
-  }, [combos]);
-
-  const categoryCombos = useMemo(() => combos.filter(c => matchesCategory(c.category)), [combos, matchesCategory]);
-  const categoryBodyStyles = useMemo(() => bodyStyles.filter(b => matchesCategory(b.category)), [bodyStyles, matchesCategory]);
+  const categoryCombos = useMemo(() => combos.filter(c => sameCategory(c.category)), [combos, sameCategory]);
+  const categoryBodyStyles = useMemo(() => bodyStyles.filter(b => sameCategory(b.category)), [bodyStyles, sameCategory]);
 
   const saveBaseWeight = useCallback(async (comboId: number, raw: string) => {
     const val = raw.trim() === '' ? null : Number(raw);
@@ -1368,98 +1488,108 @@ function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, 
     }
   }, []);
 
-  // Build predictions per engine combo row
-  const predictions = useMemo(() => {
-    return rows.map(r => {
-      const combo = r.engineComboId != null
-        ? combos.find(c => c.id === r.engineComboId)
-        : comboByName.get(r.engineCombo);
-      const base = combo?.base_weight ?? null;
-      const bsId = combo ? bodyStyleSel[r.engineCombo] : '';
-      const bsMod = bsId ? (bodyStyles.find(b => b.id === bsId)?.weight_modifier ?? 0) : 0;
-      const wt1 = base != null ? base + bsMod : null;
-      const deltaRaw = proposed[r.engineCombo];
-      const delta = deltaRaw && deltaRaw.trim() !== '' ? Number(deltaRaw) : 0;
-      const wt2 = wt1 != null && isFinite(delta) ? wt1 + delta : null;
-      const valid = wt1 != null && wt2 != null && wt1 > 0 && wt2 > 0;
-      const et2 = valid && r.et1 != null ? predictET(r.et1, wt1, wt2) : null;
-      const mph2 = valid && r.mph1 != null ? predictMPH(r.mph1, wt1, wt2) : null;
-      return {
-        ...r, comboId: combo?.id ?? null, base, bsMod, wt1, wt2, delta,
-        et2, mph2,
-        etDelta: et2 != null && r.et1 != null ? et2 - r.et1 : null,
-        mphDelta: mph2 != null && r.mph1 != null ? mph2 - r.mph1 : null,
-        hasBase: base != null,
-      };
+  // Build proposed-override maps for the current category
+  const proposedMaps = useMemo(() => {
+    const pb: Record<number, number> = {};
+    categoryCombos.forEach(c => {
+      const v = propBase[c.id];
+      if (v != null && v.trim() !== '' && isFinite(Number(v))) pb[c.id] = Number(v);
     });
-  }, [rows, combos, comboByName, bodyStyles, bodyStyleSel, proposed]);
+    const pm: Record<number, number> = {};
+    categoryBodyStyles.forEach(b => {
+      const v = propMod[b.id];
+      if (v != null && v.trim() !== '' && isFinite(Number(v))) pm[b.id] = Number(v);
+    });
+    return { pb, pm };
+  }, [categoryCombos, categoryBodyStyles, propBase, propMod]);
 
-  // Re-ranked parity: order by predicted ET (quicker = better); fall back to current ET
-  const currentRank = useMemo(
-    () => [...predictions].filter(p => p.et1 != null).sort((a, b) => (a.et1! - b.et1!)),
-    [predictions]
-  );
-  const predictedRank = useMemo(
-    () => [...predictions].filter(p => (p.et2 ?? p.et1) != null).sort((a, b) => ((a.et2 ?? a.et1!) - (b.et2 ?? b.et1!))),
-    [predictions]
-  );
-  const currentSpread = useMemo(() => {
-    const vals = currentRank.map(p => p.et1!).filter(v => v != null);
-    return vals.length >= 2 ? Math.max(...vals) - Math.min(...vals) : null;
-  }, [currentRank]);
-  const predictedSpread = useMemo(() => {
-    const vals = predictedRank.map(p => (p.et2 ?? p.et1)!).filter(v => v != null);
-    return vals.length >= 2 ? Math.max(...vals) - Math.min(...vals) : null;
-  }, [predictedRank]);
+  // Recompute parity (debounced) whenever event / scope / proposed values change.
+  const isDiv = division !== 'nationals';
+  const proposedKey = JSON.stringify(proposedMaps);
+  useEffect(() => {
+    if (!event || isDiv) { setResult(null); return; }
+    let cancelled = false;
+    setLoading(true); setErr('');
+    const t = setTimeout(() => {
+      parityApi.weightChangeParity({
+        eventId: event.id, category, mode: corrMode, sessionScope, groupBy, topN: 4,
+        proposedBaseWeights: proposedMaps.pb, proposedModifiers: proposedMaps.pm,
+      })
+        .then(res => { if (!cancelled) setResult(res); })
+        .catch(e => { if (!cancelled) setErr(e instanceof Error ? e.message : 'Failed to recompute parity'); })
+        .finally(() => { if (!cancelled) setLoading(false); });
+    }, 450);
+    return () => { cancelled = true; clearTimeout(t); };
+    // proposedKey captures proposedMaps content for the dependency check
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [event?.id, category, corrMode, sessionScope, groupBy, isDiv, proposedKey]);
+
+  const resetProposed = useCallback(() => {
+    setPropBase(baseWeights);
+    setPropMod(modifiers);
+  }, [baseWeights, modifiers]);
 
   if (!event) return <div style={S.card}><p style={S.hint}>Select an event above to model weight changes.</p></div>;
 
-  const deltaStyle = (d: number | null, lowerBetter: boolean): React.CSSProperties => {
-    if (d == null || Math.abs(d) < 1e-9) return { color: 'var(--color-muted)' };
-    const improved = lowerBetter ? d < 0 : d > 0;
-    return { color: improved ? '#16a34a' : '#dc2626', fontWeight: 600 };
-  };
-  const fmtDelta = (d: number | null, dec: number) => d == null ? '—' : `${d > 0 ? '+' : ''}${d.toFixed(dec)}`;
+  const grpLabel = groupBy === 'bodyStyle' ? 'Body Style' : 'Engine Combo';
+  const inp = (v: string) => ({ ...S.inp, width: 80, textAlign: 'right' as const, ...(v?.trim() !== '' ? {} : {}) });
 
   return (
     <div>
       <div style={{ ...S.card, marginBottom: '0.5rem' }}>
         <div style={{ fontSize: '0.95rem', fontWeight: 700, color: 'var(--color-text)' }}>Weight Change — {displayLabel}</div>
         <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>
-          Predicts ET &amp; MPH changes using the Drag Racing Pro Book formula
-          (ET₂ = ET₁ × (WT₁/WT₂)<sup>-0.33</sup>, MPH₂ = MPH₁ × (WT₁/WT₂)<sup>0.33</sup>).
-          Base weights and body-style modifiers are saved and shared for all users.
+          Set official weights, then enter proposed weights. Every run's ET is recomputed via each car's actual
+          engine-combo + body-style assignment (ET₂ = ET₁ × (WT₁/WT₂)<sup>-0.33</sup>), the quickest runs re-found,
+          and quickest / quickest-4 average re-aggregated by <strong>{grpLabel}</strong> (Group selector above).
         </div>
       </div>
 
       {err && <div style={{ ...S.card, color: '#ef4444' }}>{err}</div>}
-      {!canEdit && <div style={{ ...S.card, fontSize: '0.72rem', color: '#92400e', background: '#fef3c7' }}>You can run what-if scenarios but lack the nhra.parity capability needed to save base weights / modifiers.</div>}
+      {isDiv && <div style={{ ...S.card, fontSize: '0.72rem', color: '#92400e', background: '#fef3c7' }}>Weight-change recalculation is currently available for national events only.</div>}
+      {!canEdit && <div style={{ ...S.card, fontSize: '0.72rem', color: '#92400e', background: '#fef3c7' }}>You can run what-if scenarios but lack the nhra.parity capability needed to save official base weights / modifiers.</div>}
 
       <div style={S.grid2}>
         {/* Base weights editor */}
         <div style={S.card}>
-          <div style={SS.secHead}>Base Weights — Engine Combos</div>
+          <div style={SS.secHead}>Base Weights — Engine Combos ({displayLabel})</div>
           {categoryCombos.length === 0
             ? <p style={S.hint}>No engine combos defined for {displayLabel}.</p>
             : (
               <table style={SS.tbl}>
-                <thead><tr><th style={SS.th}>Engine Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>Base Weight (lbs)</th></tr></thead>
+                <thead><tr>
+                  <th style={SS.th}>Engine Combo</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Official (lbs)</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Proposed (lbs)</th>
+                </tr></thead>
                 <tbody>
-                  {categoryCombos.map(c => (
-                    <tr key={c.id}>
-                      <td style={SS.td}><span style={S.badge(comboColor(c.name))}>{c.name}</span></td>
-                      <td style={{ ...SS.td, textAlign: 'right' }}>
-                        <input
-                          type="number" disabled={!canEdit}
-                          value={baseWeights[c.id] ?? ''}
-                          onChange={e => setBaseWeights(prev => ({ ...prev, [c.id]: e.target.value }))}
-                          onBlur={e => canEdit && saveBaseWeight(c.id, e.target.value)}
-                          style={{ ...S.inp, width: 90, textAlign: 'right' }}
-                          placeholder="—"
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {categoryCombos.map(c => {
+                    const changed = (propBase[c.id] ?? '') !== (baseWeights[c.id] ?? '');
+                    return (
+                      <tr key={c.id}>
+                        <td style={SS.td}><span style={S.badge(comboColor(c.name))}>{c.name}</span></td>
+                        <td style={{ ...SS.td, textAlign: 'right' }}>
+                          <input
+                            type="number" disabled={!canEdit}
+                            value={baseWeights[c.id] ?? ''}
+                            onChange={e => setBaseWeights(prev => ({ ...prev, [c.id]: e.target.value }))}
+                            onBlur={e => canEdit && saveBaseWeight(c.id, e.target.value)}
+                            style={inp(baseWeights[c.id] ?? '')}
+                            placeholder="—"
+                          />
+                        </td>
+                        <td style={{ ...SS.td, textAlign: 'right' }}>
+                          <input
+                            type="number"
+                            value={propBase[c.id] ?? ''}
+                            onChange={e => setPropBase(prev => ({ ...prev, [c.id]: e.target.value }))}
+                            style={{ ...inp(propBase[c.id] ?? ''), ...(changed ? { borderColor: '#3b82f6', color: '#3b82f6' } : {}) }}
+                            placeholder="—"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -1467,139 +1597,79 @@ function WeightChangeReport({ event, category, displayLabel, corrMode, groupBy, 
 
         {/* Body style modifiers editor */}
         <div style={S.card}>
-          <div style={SS.secHead}>Body Style Modifiers</div>
+          <div style={SS.secHead}>Body Style Modifiers ({displayLabel})</div>
           {categoryBodyStyles.length === 0
             ? <p style={S.hint}>No body styles defined for {displayLabel}.</p>
             : (
               <table style={SS.tbl}>
-                <thead><tr><th style={SS.th}>Body Style</th><th style={{ ...SS.th, textAlign: 'right' }}>Modifier (lbs)</th></tr></thead>
+                <thead><tr>
+                  <th style={SS.th}>Body Style</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Official (lbs)</th>
+                  <th style={{ ...SS.th, textAlign: 'right' }}>Proposed (lbs)</th>
+                </tr></thead>
                 <tbody>
-                  {categoryBodyStyles.map(b => (
-                    <tr key={b.id}>
-                      <td style={SS.td}>{b.name}</td>
-                      <td style={{ ...SS.td, textAlign: 'right' }}>
-                        <input
-                          type="number" disabled={!canEdit}
-                          value={modifiers[b.id] ?? '0'}
-                          onChange={e => setModifiers(prev => ({ ...prev, [b.id]: e.target.value }))}
-                          onBlur={e => canEdit && saveModifier(b.id, e.target.value)}
-                          style={{ ...S.inp, width: 90, textAlign: 'right' }}
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {categoryBodyStyles.map(b => {
+                    const changed = (propMod[b.id] ?? '') !== (modifiers[b.id] ?? '');
+                    return (
+                      <tr key={b.id}>
+                        <td style={SS.td}>{b.name}</td>
+                        <td style={{ ...SS.td, textAlign: 'right' }}>
+                          <input
+                            type="number" disabled={!canEdit}
+                            value={modifiers[b.id] ?? '0'}
+                            onChange={e => setModifiers(prev => ({ ...prev, [b.id]: e.target.value }))}
+                            onBlur={e => canEdit && saveModifier(b.id, e.target.value)}
+                            style={inp(modifiers[b.id] ?? '')}
+                          />
+                        </td>
+                        <td style={{ ...SS.td, textAlign: 'right' }}>
+                          <input
+                            type="number"
+                            value={propMod[b.id] ?? '0'}
+                            onChange={e => setPropMod(prev => ({ ...prev, [b.id]: e.target.value }))}
+                            style={{ ...inp(propMod[b.id] ?? ''), ...(changed ? { borderColor: '#3b82f6', color: '#3b82f6' } : {}) }}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             )}
         </div>
       </div>
 
-      {/* What-if predictions */}
-      <div style={S.card}>
-        <div style={SS.secHead}>Proposed Weight Change — Predicted Effect per Combo</div>
-        {loading ? <p style={S.hint}>Loading current ET / MPH…</p>
-          : rows.length === 0 ? <p style={S.hint}>No combo data for this event/category.</p>
-          : (
-            <table style={SS.tbl}>
-              <thead>
-                <tr>
-                  <th style={SS.th}>Engine Combo</th>
-                  <th style={SS.th}>Body Style (opt)</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>Cur WT</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ Weight</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>New WT</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>ET (cur→new)</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ ET</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>MPH (cur→new)</th>
-                  <th style={{ ...SS.th, textAlign: 'right' }}>Δ MPH</th>
-                </tr>
-              </thead>
-              <tbody>
-                {predictions.map(p => (
-                  <tr key={p.engineCombo}>
-                    <td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td>
-                    <td style={SS.td}>
-                      <select
-                        value={bodyStyleSel[p.engineCombo] ?? ''}
-                        onChange={e => setBodyStyleSel(prev => ({ ...prev, [p.engineCombo]: e.target.value === '' ? '' : Number(e.target.value) }))}
-                        style={{ ...S.inp, width: 130 }}
-                      >
-                        <option value="">— none —</option>
-                        {categoryBodyStyles.map(b => (
-                          <option key={b.id} value={b.id}>{b.name} ({b.weight_modifier > 0 ? '+' : ''}{b.weight_modifier})</option>
-                        ))}
-                      </select>
-                    </td>
-                    <td style={{ ...SS.td, textAlign: 'right' }}>
-                      {p.hasBase ? p.wt1!.toFixed(0) : <span style={S.nd} title="Set a base weight for this combo">set base</span>}
-                    </td>
-                    <td style={{ ...SS.td, textAlign: 'right' }}>
-                      <input
-                        type="number"
-                        value={proposed[p.engineCombo] ?? ''}
-                        onChange={e => setProposed(prev => ({ ...prev, [p.engineCombo]: e.target.value }))}
-                        style={{ ...S.inp, width: 70, textAlign: 'right' }}
-                        placeholder="0"
-                      />
-                    </td>
-                    <td style={{ ...SS.td, textAlign: 'right' }}>{p.wt2 != null ? p.wt2.toFixed(0) : '—'}</td>
-                    <td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et1)} → {formatET(p.et2)}</td>
-                    <td style={{ ...SS.td, textAlign: 'right', ...deltaStyle(p.etDelta, true) }}>{fmtDelta(p.etDelta, 3)}</td>
-                    <td style={{ ...SS.td, textAlign: 'right' }}>{formatMPH(p.mph1)} → {formatMPH(p.mph2)}</td>
-                    <td style={{ ...SS.td, textAlign: 'right', ...deltaStyle(p.mphDelta, false) }}>{fmtDelta(p.mphDelta, 2)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      <div style={{ ...S.row, margin: '0.25rem 0 0.5rem' }}>
+        <button style={S.btn} onClick={resetProposed}>Reset proposed → official</button>
+        <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)', marginLeft: 8 }}>
+          {loading ? 'Recomputing…' : result ? `Recomputed from ${result.totalRunsInScope} runs` : ''}
+        </span>
       </div>
 
-      {/* Re-ranked parity comparison */}
-      {!loading && rows.length > 0 && (
-        <div style={S.card}>
-          <div style={SS.secHead}>Re-Ranked Parity (by ET — quicker is better)</div>
-          <div style={S.grid2}>
-            <div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 4 }}>Current</div>
-              <table style={SS.tbl}>
-                <thead><tr><th style={SS.th}>#</th><th style={SS.th}>Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>ET</th></tr></thead>
-                <tbody>
-                  {currentRank.map((p, i) => (
-                    <tr key={p.engineCombo}><td style={SS.td}>{i + 1}</td><td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td><td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et1)}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-              <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', marginTop: 4 }}>Spread: {currentSpread != null ? currentSpread.toFixed(3) : '—'} s</div>
-            </div>
-            <div>
-              <div style={{ fontSize: '0.75rem', fontWeight: 700, marginBottom: 4 }}>After Proposed Change</div>
-              <table style={SS.tbl}>
-                <thead><tr><th style={SS.th}>#</th><th style={SS.th}>Combo</th><th style={{ ...SS.th, textAlign: 'right' }}>ET</th></tr></thead>
-                <tbody>
-                  {predictedRank.map((p, i) => {
-                    const prevIdx = currentRank.findIndex(c => c.engineCombo === p.engineCombo);
-                    const moved = prevIdx >= 0 ? prevIdx - i : 0;
-                    return (
-                      <tr key={p.engineCombo}>
-                        <td style={SS.td}>{i + 1}{moved !== 0 && <span style={{ fontSize: '0.65rem', marginLeft: 3, color: moved > 0 ? '#16a34a' : '#dc2626' }}>{moved > 0 ? `▲${moved}` : `▼${-moved}`}</span>}</td>
-                        <td style={SS.td}><span style={S.badge(comboColor(p.engineCombo))}>{p.engineCombo}</span></td>
-                        <td style={{ ...SS.td, textAlign: 'right' }}>{formatET(p.et2 ?? p.et1)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <div style={{ fontSize: '0.72rem', color: 'var(--color-muted)', marginTop: 4 }}>
-                Spread: {predictedSpread != null ? predictedSpread.toFixed(3) : '—'} s
-                {currentSpread != null && predictedSpread != null && (
-                  <span style={{ marginLeft: 6, ...deltaStyle(predictedSpread - currentSpread, true) }}>
-                    ({fmtDelta(predictedSpread - currentSpread, 3)} s {predictedSpread < currentSpread ? 'tighter' : 'wider'})
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+      {result && result.missingWeightCombos.length > 0 && (
+        <div style={{ ...S.card, fontSize: '0.72rem', color: '#92400e', background: '#fef3c7' }}>
+          No official base weight set for: {result.missingWeightCombos.join(', ')}. Runs for these combos are shown unchanged
+          (a current weight is required to scale ET). Set an Official base weight above to include them.
         </div>
+      )}
+
+      {result && result.groups.length > 0 ? (
+        <>
+          <WeightCompareSection
+            title={`Quickest Run per ${grpLabel} — Current vs Proposed`}
+            groupLabel={grpLabel}
+            groups={result.groups}
+            accessor={g => ({ current: g.quickestCurrent, proposed: g.quickestProposed })}
+          />
+          <WeightCompareSection
+            title={`Average ${result.topN} Quickest per ${grpLabel} — Current vs Proposed`}
+            groupLabel={grpLabel}
+            groups={result.groups}
+            accessor={g => ({ current: g.avgTopNCurrent, proposed: g.avgTopNProposed })}
+          />
+        </>
+      ) : (
+        !loading && !isDiv && <div style={S.card}><p style={S.hint}>No combo data for this event/category.</p></div>
       )}
     </div>
   );

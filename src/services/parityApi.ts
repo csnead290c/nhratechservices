@@ -826,6 +826,33 @@ export interface BodyStyleListResponse {
   bodyStyles: BodyStyleRow[];
 }
 
+// ── Weight Change Parity Types ────────────────────────────────────────
+export interface WeightChangeParityGroup {
+  group: string;
+  groupId: number | null;
+  countRuns: number;
+  countNoWeight: number;
+  quickestCurrent: number | null;
+  quickestProposed: number | null;
+  avgTopNCurrent: number | null;
+  avgTopNProposed: number | null;
+}
+
+export interface WeightChangeParityResponse {
+  eventId: number;
+  category: string;
+  classIndex: string;
+  groupBy: 'engineCombo' | 'bodyStyle';
+  mode: 'raw' | 'corrected';
+  topN: number;
+  sessionScope: 'qual' | 'elim' | 'both';
+  isLowerBetter: boolean;
+  event: { event_name: string; track_name: string; start_date_local: string; end_date_local: string };
+  groups: WeightChangeParityGroup[];
+  missingWeightCombos: string[];
+  totalRunsInScope: number;
+}
+
 export interface DriverBodyStyleRow {
   id: number;
   driver_name: string;
@@ -2630,6 +2657,31 @@ export const parityApi = {
     if (params.category) qs.set('category', params.category);
     if (params.limit) qs.set('limit', String(params.limit));
     return parityRequest<EventsWithStatsResponse>(`/parity.php?${qs.toString()}`);
+  },
+
+  // Recompute ET per run with proposed engine-combo base weights / body-style
+  // modifiers (applied via each car's actual assignment), then re-aggregate
+  // quickest + avg-top-N per group for current vs proposed.
+  async weightChangeParity(params: {
+    eventId: number; category?: string; classIndex?: string;
+    mode: 'raw' | 'corrected'; sessionScope: 'qual' | 'elim' | 'both';
+    groupBy: 'engineCombo' | 'bodyStyle'; topN?: number;
+    proposedBaseWeights: Record<number, number | null>;
+    proposedModifiers: Record<number, number | null>;
+  }): Promise<WeightChangeParityResponse> {
+    const qs = new URLSearchParams();
+    qs.set('action', 'weightChangeParity');
+    qs.set('eventId', String(params.eventId));
+    if (params.category) qs.set('category', params.category);
+    if (params.classIndex) qs.set('classIndex', params.classIndex);
+    qs.set('metric', 'et_1320');
+    qs.set('mode', params.mode);
+    qs.set('sessionScope', params.sessionScope);
+    qs.set('groupBy', params.groupBy);
+    qs.set('topN', String(params.topN ?? 4));
+    qs.set('proposedBaseWeights', JSON.stringify(params.proposedBaseWeights));
+    qs.set('proposedModifiers', JSON.stringify(params.proposedModifiers));
+    return parityRequest<WeightChangeParityResponse>(`/parity.php?${qs.toString()}`);
   },
 
   // ── Driver Body Style endpoints ────────────────────────────────────────

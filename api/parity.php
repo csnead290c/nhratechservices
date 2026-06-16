@@ -309,6 +309,10 @@ switch ($action) {
         if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleEventsAtTrack($pdo);
         break;
+    case 'weightChangeParity':
+        if ($method !== 'GET') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
+        handleWeightChangeParity($pdo);
+        break;
     case 'setComboBaseWeight':
         if ($method !== 'POST') rsa_jsonResponse(['error' => 'Method not allowed'], 405);
         handleSetComboBaseWeight($pdo, $auth);
@@ -8749,7 +8753,7 @@ function handleParityByCombo(PDO $pdo): void {
 // Used by paritySummary, parityDeltas, parityAllRuns, parityQualOrder
 // ============================================================================
 
-function parity_loadEventRunData(PDO $pdo): array {
+function parity_loadEventRunData(PDO $pdo, bool $resolveBothAssignments = false): array {
     $eventId = (int)($_GET['eventId'] ?? 0);
     $eventIdsRaw = trim($_GET['eventIds'] ?? '');
     $classIndex = trim($_GET['classIndex'] ?? '');
@@ -8850,9 +8854,9 @@ function parity_loadEventRunData(PDO $pdo): array {
         FROM parity_class_defaults cd JOIN parity_engine_combos ec ON ec.id = cd.engine_combo_id
     ")->fetchAll(PDO::FETCH_ASSOC);
 
-    // Load body style assignments if grouping by body style
+    // Load body style assignments if grouping by body style (or when both assignments requested)
     $driverBodyStyles = [];
-    if ($groupBy === 'bodyStyle') {
+    if ($groupBy === 'bodyStyle' || $resolveBothAssignments) {
         $driverBodyStyles = $pdo->query("
             SELECT dbs.driver_name, dbs.class_index, dbs.body_style_id, bs.name AS body_style_name,
                    dbs.effective_from_utc, dbs.effective_to_utc
@@ -8942,11 +8946,16 @@ function parity_loadEventRunData(PDO $pdo): array {
             $comboId = $resolved['id'];
         }
 
+        // Resolve body style (always when both assignments requested, or when grouping by body style)
+        $bsResolved = null;
+        if ($groupBy === 'bodyStyle' || $resolveBothAssignments) {
+            $bsResolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $category);
+        }
+
         // Resolve group label based on groupBy
         $groupLabel = 'Unknown';
         $groupId = null;
         if ($groupBy === 'bodyStyle') {
-            $bsResolved = resolveBodyStyleForRun($run['driver_name'], $run['class_index'], $run['run_timestamp_utc'], $driverBodyStyles, $category);
             if ($bsResolved) {
                 $groupLabel = $bsResolved['name'];
                 $groupId = $bsResolved['id'];
@@ -9013,6 +9022,9 @@ function parity_loadEventRunData(PDO $pdo): array {
             'weather' => $wxSnapshot,
             'engineCombo' => $groupLabel, 'engineComboId' => $groupId,
             'actualEngineCombo' => $comboName, // always the real engine combo regardless of groupBy
+            'actualEngineComboId' => $comboId,
+            'bodyStyle' => $bsResolved['name'] ?? null,
+            'bodyStyleId' => $bsResolved['id'] ?? null,
             'eventId' => isset($run['event_id']) ? (int)$run['event_id'] : null,
             'et' => ($correctionFactor && $run['ft1320'] !== null)
                 ? round((float)$run['ft1320'] * pow($correctionFactor, -0.33), 4)
@@ -9148,6 +9160,129 @@ function parity_buildComboAggregates(array $comboRuns, bool $includeUnknown, boo
         default => $isLowerBetter ? ($a['bestValue'] <=> $b['bestValue']) : ($b['bestValue'] <=> $a['bestValue']),
     });
     return [$combos, $comboAggs];
+}
+
+// ============================================================================
+// GET ?action=weightChangeParity
+// Recomputes ET for EVERY run using proposed engine-combo base weights and
+// body-style modifiers, applied via each car's ACTUAL combo + body-style
+// assignment (Drag Racing Pro Book: ET2 = ET1 * (WT1/WT2)^-0.33). Then
+// re-aggregates quickest + avg-top-N per group (engineCombo or bodyStyle)
+// for both CURRENT (recorded ET) and PROPOSED (weight-adjusted ET).
+//
+// Params (besides standard eventId/category/mode/sessionScope/groupBy/topN):
+//   proposedBaseWeights : JSON map { comboId: lbs }       (overrides saved base_weight)
+//   proposedModifiers   : JSON map { bodyStyleId: lbs }   (overrides saved weight_modifier)
+// Aggregation is ET-based; isLowerBetter is always true here.
+// ============================================================================
+
+function handleWeightChangeParity(PDO $pdo): void {
+    $d = parity_loadEventRunData($pdo, true);
+    $p = $d['params'];
+    $topN = (int)$p['topN'];
+    $includeUnknown = (bool)$p['includeUnknown'];
+    $WEIGHT_EXP = 0.33;
+
+    // Proposed overrides (numeric-string JSON keys become int array keys in PHP)
+    $propBaseRaw = json_decode($_GET['proposedBaseWeights'] ?? '{}', true);
+    $propModRaw  = json_decode($_GET['proposedModifiers'] ?? '{}', true);
+    $proposedBase = is_array($propBaseRaw) ? $propBaseRaw : [];
+    $proposedMod  = is_array($propModRaw) ? $propModRaw : [];
+
+    // Current saved weights from DB
+    $baseWeights = [];
+    foreach ($pdo->query("SELECT id, base_weight FROM parity_engine_combos")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $baseWeights[(int)$r['id']] = $r['base_weight'] !== null ? (float)$r['base_weight'] : null;
+    }
+    $modifiers = [];
+    foreach ($pdo->query("SELECT id, weight_modifier FROM parity_body_styles")->fetchAll(PDO::FETCH_ASSOC) as $r) {
+        $modifiers[(int)$r['id']] = (float)($r['weight_modifier'] ?? 0);
+    }
+
+    // Group runs by group label; collect current & proposed ETs per run.
+    $groups = [];
+    $missingWeightCombos = [];
+
+    foreach ($d['allRunsFlat'] as $run) {
+        if ($run['excluded']) continue;
+        $label = $run['engineCombo']; // group label per groupBy
+        if ($label === 'Unknown' && !$includeUnknown) continue;
+        $et = $run['et'];
+        if ($et === null) continue;
+
+        $comboId = $run['actualEngineComboId'] ?? null;
+        $bsId    = $run['bodyStyleId'] ?? null;
+
+        $curBase = ($comboId !== null && array_key_exists($comboId, $baseWeights)) ? $baseWeights[$comboId] : null;
+        $curMod  = ($bsId !== null && array_key_exists($bsId, $modifiers)) ? $modifiers[$bsId] : 0.0;
+
+        $propBaseVal = ($comboId !== null && array_key_exists($comboId, $proposedBase)
+            && $proposedBase[$comboId] !== null && $proposedBase[$comboId] !== '')
+            ? (float)$proposedBase[$comboId] : $curBase;
+        $propModVal = ($bsId !== null && array_key_exists($bsId, $proposedMod)
+            && $proposedMod[$bsId] !== null && $proposedMod[$bsId] !== '')
+            ? (float)$proposedMod[$bsId] : $curMod;
+
+        $curTotal  = $curBase !== null ? $curBase + $curMod : null;
+        $propTotal = $propBaseVal !== null ? $propBaseVal + $propModVal : null;
+
+        $proposedEt = $et;
+        $hasWeight = false;
+        if ($curTotal !== null && $propTotal !== null && $curTotal > 0 && $propTotal > 0) {
+            $proposedEt = round($et * pow($curTotal / $propTotal, -$WEIGHT_EXP), 4);
+            $hasWeight = true;
+        } elseif ($comboId !== null && $curBase === null) {
+            $missingWeightCombos[$run['actualEngineCombo']] = true;
+        }
+
+        if (!isset($groups[$label])) {
+            $groups[$label] = ['id' => $run['engineComboId'], 'current' => [], 'proposed' => [], 'countRuns' => 0, 'countNoWeight' => 0];
+        }
+        $groups[$label]['current'][]  = $et;
+        $groups[$label]['proposed'][] = $proposedEt;
+        $groups[$label]['countRuns']++;
+        if (!$hasWeight) $groups[$label]['countNoWeight']++;
+    }
+
+    $agg = function(array $ets) use ($topN) {
+        sort($ets); // ascending — lower ET = quicker
+        $best = count($ets) > 0 ? round($ets[0], 4) : null;
+        $slice = array_slice($ets, 0, $topN);
+        $avgTopN = count($slice) > 0 ? round(array_sum($slice) / count($slice), 4) : null;
+        return ['best' => $best, 'avgTopN' => $avgTopN];
+    };
+
+    $result = [];
+    foreach ($groups as $label => $g) {
+        $cur = $agg($g['current']);
+        $prop = $agg($g['proposed']);
+        $result[] = [
+            'group' => $label,
+            'groupId' => $g['id'],
+            'countRuns' => $g['countRuns'],
+            'countNoWeight' => $g['countNoWeight'],
+            'quickestCurrent' => $cur['best'],
+            'quickestProposed' => $prop['best'],
+            'avgTopNCurrent' => $cur['avgTopN'],
+            'avgTopNProposed' => $prop['avgTopN'],
+        ];
+    }
+    // Sort by current quickest ascending (quicker first; nulls last)
+    usort($result, fn($a, $b) => match(true) {
+        $a['quickestCurrent'] === null => 1,
+        $b['quickestCurrent'] === null => -1,
+        default => $a['quickestCurrent'] <=> $b['quickestCurrent'],
+    });
+
+    rsa_jsonResponse([
+        'eventId' => $p['eventId'], 'category' => $p['category'], 'classIndex' => $p['classIndex'],
+        'groupBy' => $p['groupBy'], 'mode' => $p['mode'], 'topN' => $topN,
+        'sessionScope' => $p['sessionScope'], 'isLowerBetter' => true,
+        'event' => $d['event'],
+        'groups' => $result,
+        'missingWeightCombos' => array_keys($missingWeightCombos),
+        'totalRunsInScope' => $d['totalRunsInScope'],
+    ]);
 }
 
 // ============================================================================
