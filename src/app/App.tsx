@@ -39,6 +39,7 @@ const EventPrePlanEditor = lazy(() => import('../pages/EventPrePlanEditor'));
 const EventLiveChecklist = lazy(() => import('../pages/EventLiveChecklist'));
 const EventPostReportBuilder = lazy(() => import('../pages/EventPostReportBuilder'));
 const EventPostReportDetail = lazy(() => import('../pages/EventPostReportDetail'));
+const EventScheduleSheet = lazy(() => import('../pages/EventScheduleSheet'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -651,6 +652,13 @@ function App() {
               <CapabilityRoute requireCap="eventops.read">
                 <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
                   <EventPrePlanEditor />
+                </Suspense>
+              </CapabilityRoute>
+            } />
+            <Route path="/event-ops/:id/sheet" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventScheduleSheet />
                 </Suspense>
               </CapabilityRoute>
             } />
