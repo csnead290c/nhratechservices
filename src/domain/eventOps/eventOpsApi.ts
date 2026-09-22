@@ -55,10 +55,108 @@ async function eoPost<T>(action: string, body: Record<string, unknown>): Promise
 
 export type PlanType = 'pre_event' | 'race_day' | 'post_event' | 'template';
 export type PlanStatus = 'draft' | 'pending_review' | 'approved' | 'archived';
+export type LifecycleStage = 'draft' | 'pre_event' | 'live' | 'complete' | 'reviewed';
 export type TaskType = 'inspection' | 'survey' | 'briefing' | 'logistics' | 'safety' | 'admin' | 'other';
 export type TaskPriority = 'high' | 'normal' | 'low';
 export type TaskStatus = 'open' | 'in_progress' | 'completed' | 'deferred' | 'cancelled';
 export type FileType = 'map' | 'schedule' | 'entry_list' | 'manual' | 'report' | 'photo' | 'other';
+
+// ── v40 Structured Schedule types ────────────────────────────────────────
+
+export type ScheduleStatus = 'upcoming' | 'called' | 'running' | 'complete' | 'delayed' | 'cancelled';
+export type ActivityType =
+  | 'racing' | 'meeting' | 'inspection' | 'contingency'
+  | 'parade' | 'teardown' | 'secure' | 'break' | 'other';
+
+export const SCHEDULE_STATUSES: { value: ScheduleStatus; label: string }[] = [
+  { value: 'upcoming',  label: 'Upcoming' },
+  { value: 'called',    label: 'Called' },
+  { value: 'running',   label: 'Running' },
+  { value: 'complete',  label: 'Complete' },
+  { value: 'delayed',   label: 'Delayed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+export const ACTIVITY_TYPES: { value: ActivityType; label: string }[] = [
+  { value: 'racing',      label: 'Racing' },
+  { value: 'meeting',     label: 'Meeting' },
+  { value: 'inspection',  label: 'Inspection' },
+  { value: 'contingency', label: 'Contingency' },
+  { value: 'parade',      label: 'Parade' },
+  { value: 'teardown',    label: 'Teardown' },
+  { value: 'secure',      label: 'Secure' },
+  { value: 'break',       label: 'Break' },
+  { value: 'other',       label: 'Other' },
+];
+
+/** Suggested class/category codes for datalist autocomplete (not exhaustive). */
+export const CATEGORY_SUGGESTIONS = [
+  'TF', 'FC', 'PS', 'PSM', 'PM', 'TS', 'TD', 'TAD', 'TAFC', 'Comp', 'SG', 'SC', 'ST', 'SS',
+];
+
+/** Suggested staff duty labels (not exhaustive — free text allowed). */
+export const DUTY_SUGGESTIONS = [
+  'TF/FC', 'PS/PSM', 'FSS/TS', 'Fuel Check', 'Scales', 'Shutoffs', 'TV Antenna',
+  'Water Station', 'Ice/Drinks', 'Clean Cabinets', 'Clean Counters/Floors',
+  'Chassis Certifications', 'Lane Checks', 'Contingency', 'Winner Data',
+];
+
+/** Suggested per-session responsibilities for schedule assignments. */
+export const RESPONSIBILITY_SUGGESTIONS = [
+  'Lane Checks', 'Contingency', 'Winner Data', 'Winner Data + Contingency',
+  'Fuel Check', 'Scales', 'Shutoffs', 'Inspection', 'Staging',
+];
+
+export interface EventScheduleAssignment {
+  id: number;
+  event_plan_id: number;
+  schedule_item_id: number;
+  staff_id: number | null;
+  assignee_name: string | null;
+  responsibility: string;
+  notes: string | null;
+  sort_order: number;
+  staff_display_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventScheduleItem {
+  id: number;
+  uuid: string;
+  event_plan_id: number;
+  session_id: number | null;
+  schedule_date: string | null;
+  day_label: string | null;
+  title: string;
+  sort_order: number;
+  scheduled_time: string | null;
+  projected_time: string | null;
+  activity_type: string;
+  category_code: string | null;
+  round_label: string | null;
+  expected_car_count: number | null;
+  comments: string | null;
+  scale_required: number;
+  fuel_required: number;
+  status: ScheduleStatus;
+  actual_start_at: string | null;
+  actual_end_at: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  assignments: EventScheduleAssignment[];
+}
+
+export interface EventStaffDuty {
+  id: number;
+  event_plan_id: number;
+  staff_id: number;
+  duty: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface EventPlan {
   id: number;
@@ -67,11 +165,13 @@ export interface EventPlan {
   parity_event_id: number | null;
   year: number;
   event_code: string;
+  event_date: string | null;
   track_name: string | null;
   title: string;
   class_scope: string | null;
   plan_type: PlanType;
   status: PlanStatus;
+  lifecycle_stage: LifecycleStage;
   summary: string | null;
   created_by: number;
   approved_by: number | null;
@@ -87,12 +187,17 @@ export interface EventPlanStaff {
   person_id: number | null;
   display_name: string;
   assignment: string;
+  radio_number: string | null;
+  vehicle: string | null;
+  phone: string | null;
   arrive_at: string | null;
   depart_at: string | null;
   notes: string | null;
+  is_active: number;
   sort_order: number;
   created_at: string;
   updated_at: string;
+  duties?: EventStaffDuty[];
 }
 
 export interface EventPlanSection {
@@ -202,9 +307,11 @@ export async function createPlan(data: {
   event_code: string;
   title: string;
   track_name?: string;
+  event_date?: string;
   class_scope?: string;
   plan_type?: PlanType;
   status?: PlanStatus;
+  lifecycle_stage?: LifecycleStage;
   summary?: string;
   event_instance_id?: number;
   parity_event_id?: number;
@@ -235,10 +342,15 @@ export async function addStaff(planId: number, data: {
   assignment: string;
   user_id?: number;
   person_id?: number;
+  radio_number?: string;
+  vehicle?: string;
+  phone?: string;
   arrive_at?: string;
   depart_at?: string;
   notes?: string;
+  is_active?: number;
   sort_order?: number;
+  duties?: string[];
 }): Promise<{ success: boolean; staff_id: number }> {
   return eoPost('addStaff', { plan_id: planId, ...data });
 }
@@ -694,4 +806,92 @@ export async function addReportIncident(reportId: number, payload: { title: stri
 
 export async function deleteReportIncident(reportId: number, incidentRefId: number): Promise<{ success: boolean }> {
   return eoPost('deleteReportIncident', { report_id: reportId, incident_ref_id: incidentRefId });
+}
+
+// ── v40 Structured Schedule actions ─────────────────────────────────────────
+
+export async function getSchedule(planId: number, date?: string): Promise<{ items: EventScheduleItem[]; days: string[] }> {
+  return eoGet('getSchedule', { plan_id: planId, date });
+}
+
+export interface ScheduleItemInput {
+  session_id?: number | null;
+  schedule_date?: string | null;
+  day_label?: string | null;
+  title?: string;
+  sort_order?: number;
+  scheduled_time?: string | null;
+  projected_time?: string | null;
+  activity_type?: ActivityType;
+  category_code?: string | null;
+  round_label?: string | null;
+  expected_car_count?: number | null;
+  comments?: string | null;
+  scale_required?: number;
+  fuel_required?: number;
+  status?: ScheduleStatus;
+  actual_start_at?: string | null;
+  actual_end_at?: string | null;
+}
+
+export async function addScheduleItem(planId: number, data: ScheduleItemInput & { title: string }): Promise<{ success: boolean; item_id: number }> {
+  return eoPost('addScheduleItem', { plan_id: planId, ...data });
+}
+
+export async function updateScheduleItem(itemId: number, data: ScheduleItemInput): Promise<{ success: boolean }> {
+  return eoPost('updateScheduleItem', { item_id: itemId, ...data });
+}
+
+export async function deleteScheduleItem(itemId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteScheduleItem', { item_id: itemId });
+}
+
+export async function duplicateScheduleItem(itemId: number): Promise<{ success: boolean; item_id: number }> {
+  return eoPost('duplicateScheduleItem', { item_id: itemId });
+}
+
+export async function reorderScheduleItems(planId: number, itemIds: number[]): Promise<{ success: boolean }> {
+  return eoPost('reorderScheduleItems', { plan_id: planId, item_ids: itemIds });
+}
+
+export async function setScheduleItemStatus(itemId: number, status: ScheduleStatus): Promise<{ success: boolean }> {
+  return eoPost('setScheduleItemStatus', { item_id: itemId, status });
+}
+
+export async function addScheduleAssignment(itemId: number, data: {
+  staff_id?: number | null;
+  assignee_name?: string;
+  responsibility: string;
+  notes?: string;
+  sort_order?: number;
+}): Promise<{ success: boolean; assignment_id: number }> {
+  return eoPost('addScheduleAssignment', { schedule_item_id: itemId, ...data });
+}
+
+export async function updateScheduleAssignment(assignmentId: number, data: {
+  staff_id?: number | null;
+  assignee_name?: string | null;
+  responsibility?: string;
+  notes?: string | null;
+  sort_order?: number;
+}): Promise<{ success: boolean }> {
+  return eoPost('updateScheduleAssignment', { assignment_id: assignmentId, ...data });
+}
+
+export async function deleteScheduleAssignment(assignmentId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteScheduleAssignment', { assignment_id: assignmentId });
+}
+
+// ── v40 Staff duty actions ──────────────────────────────────────────────────
+
+export async function addStaffDuty(planId: number, staffId: number, duty: string, sortOrder?: number): Promise<{ success: boolean; duty_id: number }> {
+  return eoPost('addStaffDuty', { plan_id: planId, staff_id: staffId, duty, sort_order: sortOrder });
+}
+
+export async function updateStaffDuty(dutyId: number, data: { duty?: string; sort_order?: number }): Promise<{ success: boolean }> {
+  return eoPost('updateStaffDuty', { duty_id: dutyId, ...data });
+}
+
+export async function deleteStaffDuty(dutyId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteStaffDuty', { duty_id: dutyId });
 }
