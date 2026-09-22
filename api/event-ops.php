@@ -17,6 +17,7 @@ require_once __DIR__ . '/config.php';
 require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
 require_once __DIR__ . '/event-ops-reports.php';
+require_once __DIR__ . '/event-ops-schedule.php';
 
 $pdo = getDB();
 $auth = rsa_requireAuth();
@@ -49,6 +50,10 @@ function eo_getPlanOrFail(PDO $pdo, int $planId): array {
 
 function eo_intParam(string $key, bool $required = true): ?int {
     $val = $_GET[$key] ?? $_POST[$key] ?? null;
+    if ($val === null) {
+        $body = eo_body();
+        $val = $body[$key] ?? null;
+    }
     if ($required && ($val === null || $val === '')) {
         http_response_code(400);
         echo json_encode(['error' => "Missing required parameter: $key"]);
@@ -102,9 +107,9 @@ function eo_newUuid(): string {
 function eo_listPlans(PDO $pdo, int $userId, string $role): void {
     eo_requireRead($pdo, $userId, $role);
     $stmt = $pdo->query("
-        SELECT id, uuid, year, event_code, track_name, title, class_scope,
-               plan_type, status, summary, created_by, approved_by, approved_at,
-               created_at, updated_at
+        SELECT id, uuid, event_instance_id, parity_event_id, year, event_code, event_date,
+               track_name, title, class_scope, plan_type, status, lifecycle_stage, summary,
+               created_by, approved_by, approved_at, created_at, updated_at
         FROM event_plans
         WHERE deleted_at IS NULL
         ORDER BY year DESC, event_code ASC, created_at DESC
@@ -135,12 +140,18 @@ function eo_createPlan(PDO $pdo, int $userId, string $role): void {
     }
     eo_validateEnum($planType, ['pre_event','race_day','post_event','template'], 'plan_type');
     eo_validateEnum($status, ['draft','pending_review','approved','archived'], 'status');
+    $lifecycle = $b['lifecycle_stage'] ?? 'pre_event';
+    eo_validateEnum($lifecycle, EO_LIFECYCLE_STAGES, 'lifecycle_stage');
+    $eventDate = $b['event_date'] ?? null;
+    if ($eventDate !== null && $eventDate !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $eventDate)) {
+        http_response_code(400); echo json_encode(['error' => 'event_date must be YYYY-MM-DD']); exit;
+    }
 
     $stmt = $pdo->prepare("
         INSERT INTO event_plans
-            (uuid, event_instance_id, parity_event_id, year, event_code, track_name, title,
-             class_scope, plan_type, status, summary, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            (uuid, event_instance_id, parity_event_id, year, event_code, event_date, track_name, title,
+             class_scope, plan_type, status, lifecycle_stage, summary, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         eo_newUuid(),
@@ -148,11 +159,13 @@ function eo_createPlan(PDO $pdo, int $userId, string $role): void {
         $b['parity_event_id'] ?? null,
         $year,
         $eventCode,
+        $eventDate ?: null,
         $b['track_name'] ?? null,
         $title,
         $b['class_scope'] ?? null,
         $planType,
         $status,
+        $lifecycle,
         $b['summary'] ?? null,
         $userId,
     ]);
@@ -169,16 +182,20 @@ function eo_updatePlan(PDO $pdo, int $userId, string $role): void {
 
     $fields = [];
     $params = [];
-    $allowed = ['year','event_code','track_name','title','class_scope','plan_type','status','summary','approved_by','approved_at'];
+    $allowed = ['year','event_code','event_date','track_name','title','class_scope','plan_type','status','lifecycle_stage','summary','approved_by','approved_at','event_instance_id','parity_event_id'];
     $enums = [
-        'plan_type' => ['pre_event','race_day','post_event','template'],
-        'status'    => ['draft','pending_review','approved','archived'],
+        'plan_type'       => ['pre_event','race_day','post_event','template'],
+        'status'          => ['draft','pending_review','approved','archived'],
+        'lifecycle_stage' => EO_LIFECYCLE_STAGES,
     ];
     foreach ($allowed as $f) {
         if (array_key_exists($f, $b)) {
             if (isset($enums[$f])) eo_validateEnum($b[$f], $enums[$f], $f);
+            if ($f === 'event_date' && $b[$f] !== null && $b[$f] !== '' && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $b[$f])) {
+                http_response_code(400); echo json_encode(['error' => 'event_date must be YYYY-MM-DD']); exit;
+            }
             $fields[] = "`$f` = ?";
-            $params[] = $b[$f];
+            $params[] = $b[$f] === '' ? null : $b[$f];
         }
     }
     if (!$fields) { http_response_code(400); echo json_encode(['error' => 'No fields to update']); exit; }
@@ -193,7 +210,21 @@ function eo_softDeletePlan(PDO $pdo, int $userId, string $role): void {
     $planId = (int) ($b['plan_id'] ?? 0);
     if (!$planId) { http_response_code(400); echo json_encode(['error' => 'plan_id required']); exit; }
     eo_getPlanOrFail($pdo, $planId);
-    $pdo->prepare("UPDATE event_plans SET deleted_at = NOW() WHERE id = ?")->execute([$planId]);
+    $now = date('Y-m-d H:i:s');
+    $pdo->prepare("UPDATE event_plans SET deleted_at = ? WHERE id = ?")->execute([$now, $planId]);
+    // Cascade soft-delete to child records so nothing resurfaces from a deleted plan
+    $childTables = [
+        'event_plan_staff', 'event_plan_sections', 'event_plan_sessions',
+        'event_plan_tasks', 'event_plan_files',
+        'event_schedule_items', 'event_schedule_assignments', 'event_plan_staff_duties',
+        'event_live_checklists', 'event_live_task_updates', 'event_live_session_status',
+        'event_post_reports',
+    ];
+    foreach ($childTables as $t) {
+        try {
+            $pdo->prepare("UPDATE `$t` SET deleted_at = ? WHERE event_plan_id = ? AND deleted_at IS NULL")->execute([$now, $planId]);
+        } catch (PDOException $e) { /* table may not exist yet (pre-v38/v40) */ }
+    }
     rsa_jsonResponse(['success' => true]);
 }
 
@@ -210,9 +241,9 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
 
     $stmt = $pdo->prepare("
         INSERT INTO event_plans
-            (uuid, event_instance_id, parity_event_id, year, event_code, track_name,
-             title, class_scope, plan_type, status, summary, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            (uuid, event_instance_id, parity_event_id, year, event_code, event_date, track_name,
+             title, class_scope, plan_type, status, lifecycle_stage, summary, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         eo_newUuid(),
@@ -220,11 +251,13 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
         null,
         $newYear,
         $newCode,
+        $b['event_date'] ?? $src['event_date'],
         $src['track_name'],
         $newTitle,
         $src['class_scope'],
         $src['plan_type'],
         'draft',
+        $src['lifecycle_stage'] ?? 'pre_event',
         $src['summary'],
         $userId,
     ]);
@@ -238,12 +271,95 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
         $insS->execute([$newId, $s['section_key'], $s['title'], $s['body'], $s['sort_order']]);
     }
 
-    // Clone sessions
+    // Clone sessions, keeping old→new id map for tasks/schedule items
     $sess = $pdo->prepare("SELECT * FROM event_plan_sessions WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order");
     $sess->execute([$planId]);
-    $insSession = $pdo->prepare("INSERT INTO event_plan_sessions (event_plan_id,session_key,title,class_scope,notes,sort_order) VALUES (?,?,?,?,?,?)");
+    $insSession = $pdo->prepare("INSERT INTO event_plan_sessions (event_plan_id,session_key,title,class_scope,scheduled_at,notes,sort_order) VALUES (?,?,?,?,?,?,?)");
+    $sessionMap = [];
     foreach ($sess->fetchAll(PDO::FETCH_ASSOC) as $s) {
-        $insSession->execute([$newId, $s['session_key'], $s['title'], $s['class_scope'], $s['notes'], $s['sort_order']]);
+        $insSession->execute([$newId, $s['session_key'], $s['title'], $s['class_scope'], $s['scheduled_at'], $s['notes'], $s['sort_order']]);
+        $sessionMap[(int) $s['id']] = (int) $pdo->lastInsertId();
+    }
+
+    // Clone staff, keeping old→new id map for duties/assignments
+    $stf = $pdo->prepare("SELECT * FROM event_plan_staff WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+    $stf->execute([$planId]);
+    $insStaff = $pdo->prepare("INSERT INTO event_plan_staff (event_plan_id,user_id,person_id,display_name,assignment,radio_number,vehicle,phone,arrive_at,depart_at,notes,is_active,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    $staffMap = [];
+    foreach ($stf->fetchAll(PDO::FETCH_ASSOC) as $s) {
+        $insStaff->execute([
+            $newId, $s['user_id'], $s['person_id'], $s['display_name'], $s['assignment'],
+            $s['radio_number'] ?? null, $s['vehicle'] ?? null, $s['phone'] ?? null,
+            $s['arrive_at'], $s['depart_at'], $s['notes'], $s['is_active'] ?? 1, $s['sort_order'],
+        ]);
+        $staffMap[(int) $s['id']] = (int) $pdo->lastInsertId();
+    }
+
+    // Clone staff duties
+    if ($staffMap) {
+        $dut = $pdo->prepare("SELECT * FROM event_plan_staff_duties WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+        $dut->execute([$planId]);
+        $insDuty = $pdo->prepare("INSERT INTO event_plan_staff_duties (event_plan_id,staff_id,duty,sort_order) VALUES (?,?,?,?)");
+        foreach ($dut->fetchAll(PDO::FETCH_ASSOC) as $d) {
+            if (isset($staffMap[(int) $d['staff_id']])) {
+                $insDuty->execute([$newId, $staffMap[(int) $d['staff_id']], $d['duty'], $d['sort_order']]);
+            }
+        }
+    }
+
+    // Clone tasks (session ids remapped)
+    $tks = $pdo->prepare("SELECT * FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+    $tks->execute([$planId]);
+    $insTask = $pdo->prepare("INSERT INTO event_plan_tasks (event_plan_id,session_id,title,description,task_type,priority,status,assigned_user_id,assigned_person_id,due_at,carry_forward_to_next_event,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)");
+    foreach ($tks->fetchAll(PDO::FETCH_ASSOC) as $t) {
+        $insTask->execute([
+            $newId,
+            $t['session_id'] !== null ? ($sessionMap[(int) $t['session_id']] ?? null) : null,
+            $t['title'], $t['description'], $t['task_type'], $t['priority'], 'open',
+            $t['assigned_user_id'], $t['assigned_person_id'], $t['due_at'],
+            $t['carry_forward_to_next_event'], $t['sort_order'],
+        ]);
+    }
+
+    // Clone schedule items + assignments (session/staff ids remapped)
+    $itm = $pdo->prepare("SELECT * FROM event_schedule_items WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY schedule_date, sort_order, id");
+    $itm->execute([$planId]);
+    $items = $itm->fetchAll(PDO::FETCH_ASSOC);
+    $insItem = $pdo->prepare("
+        INSERT INTO event_schedule_items
+            (uuid, event_plan_id, session_id, schedule_date, day_label, title, sort_order,
+             scheduled_time, projected_time, activity_type, category_code, round_label,
+             expected_car_count, comments, scale_required, fuel_required, status, created_by)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ");
+    $insAssign = $pdo->prepare("INSERT INTO event_schedule_assignments (event_plan_id,schedule_item_id,staff_id,assignee_name,responsibility,notes,sort_order) VALUES (?,?,?,?,?,?,?)");
+    $asStmt = $pdo->prepare("SELECT * FROM event_schedule_assignments WHERE schedule_item_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+    foreach ($items as $it) {
+        $insItem->execute([
+            eo_newUuid(), $newId,
+            $it['session_id'] !== null ? ($sessionMap[(int) $it['session_id']] ?? null) : null,
+            $it['schedule_date'], $it['day_label'], $it['title'], $it['sort_order'],
+            $it['scheduled_time'], $it['projected_time'], $it['activity_type'],
+            $it['category_code'], $it['round_label'], $it['expected_car_count'],
+            $it['comments'], $it['scale_required'], $it['fuel_required'], 'upcoming', $userId,
+        ]);
+        $newItemId = (int) $pdo->lastInsertId();
+        $asStmt->execute([(int) $it['id']]);
+        foreach ($asStmt->fetchAll(PDO::FETCH_ASSOC) as $a) {
+            $insAssign->execute([
+                $newId, $newItemId,
+                $a['staff_id'] !== null ? ($staffMap[(int) $a['staff_id']] ?? null) : null,
+                $a['assignee_name'], $a['responsibility'], $a['notes'], $a['sort_order'],
+            ]);
+        }
+    }
+
+    // Clone file references
+    $fls = $pdo->prepare("SELECT * FROM event_plan_files WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY id");
+    $fls->execute([$planId]);
+    $insFile = $pdo->prepare("INSERT INTO event_plan_files (event_plan_id,file_type,title,url,box_file_id,box_folder_id,notes) VALUES (?,?,?,?,?,?,?)");
+    foreach ($fls->fetchAll(PDO::FETCH_ASSOC) as $f) {
+        $insFile->execute([$newId, $f['file_type'], $f['title'], $f['url'], $f['box_file_id'], $f['box_folder_id'], $f['notes']]);
     }
 
     rsa_jsonResponse(['success' => true, 'plan_id' => $newId], 201);
@@ -262,7 +378,22 @@ function eo_getPlanStaff(PDO $pdo, int $userId, string $role): void {
     eo_getPlanOrFail($pdo, $planId);
     $stmt = $pdo->prepare("SELECT * FROM event_plan_staff WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
     $stmt->execute([$planId]);
-    rsa_jsonResponse(['staff' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
+    $staff = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    // Embed event-wide duties (v40) when the table exists
+    try {
+        $duties = function_exists('eos_fetchDuties')
+            ? eos_fetchDuties($pdo, array_map('intval', array_column($staff, 'id')))
+            : [];
+        foreach ($staff as &$s) {
+            $s['duties'] = $duties[$s['id']] ?? [];
+        }
+        unset($s);
+    } catch (PDOException $e) {
+        // event_plan_staff_duties may not exist yet (pre-v40)
+        foreach ($staff as &$s) { $s['duties'] = []; }
+        unset($s);
+    }
+    rsa_jsonResponse(['staff' => $staff]);
 }
 
 function eo_addStaff(PDO $pdo, int $userId, string $role): void {
@@ -274,9 +405,25 @@ function eo_addStaff(PDO $pdo, int $userId, string $role): void {
     $displayName = trim($b['display_name'] ?? '');
     $assignment  = trim($b['assignment'] ?? '');
     if (!$displayName || !$assignment) { http_response_code(400); echo json_encode(['error' => 'display_name and assignment required']); exit; }
-    $stmt = $pdo->prepare("INSERT INTO event_plan_staff (event_plan_id,user_id,person_id,display_name,assignment,arrive_at,depart_at,notes,sort_order) VALUES (?,?,?,?,?,?,?,?,?)");
-    $stmt->execute([$planId, $b['user_id']??null, $b['person_id']??null, $displayName, $assignment, $b['arrive_at']??null, $b['depart_at']??null, $b['notes']??null, (int)($b['sort_order']??0)]);
-    rsa_jsonResponse(['success' => true, 'staff_id' => (int)$pdo->lastInsertId()], 201);
+    $stmt = $pdo->prepare("INSERT INTO event_plan_staff (event_plan_id,user_id,person_id,display_name,assignment,radio_number,vehicle,phone,arrive_at,depart_at,notes,is_active,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    $stmt->execute([
+        $planId, $b['user_id']??null, $b['person_id']??null, $displayName, $assignment,
+        $b['radio_number']??null, $b['vehicle']??null, $b['phone']??null,
+        $b['arrive_at']??null, $b['depart_at']??null, $b['notes']??null,
+        isset($b['is_active']) ? (int)!empty($b['is_active']) : 1,
+        (int)($b['sort_order']??0),
+    ]);
+    $staffId = (int)$pdo->lastInsertId();
+
+    // Optional initial duties list
+    if (!empty($b['duties']) && is_array($b['duties']) && function_exists('eos_fetchDuties')) {
+        $insDuty = $pdo->prepare("INSERT INTO event_plan_staff_duties (event_plan_id,staff_id,duty,sort_order) VALUES (?,?,?,?)");
+        foreach (array_values($b['duties']) as $i => $d) {
+            $duty = trim((string) $d);
+            if ($duty !== '') $insDuty->execute([$planId, $staffId, $duty, $i]);
+        }
+    }
+    rsa_jsonResponse(['success' => true, 'staff_id' => $staffId], 201);
 }
 
 function eo_updateStaff(PDO $pdo, int $userId, string $role): void {
@@ -284,7 +431,7 @@ function eo_updateStaff(PDO $pdo, int $userId, string $role): void {
     $b = eo_body();
     $staffId = (int) ($b['staff_id'] ?? 0);
     if (!$staffId) { http_response_code(400); echo json_encode(['error' => 'staff_id required']); exit; }
-    $allowed = ['display_name','assignment','arrive_at','depart_at','notes','sort_order','user_id','person_id'];
+    $allowed = ['display_name','assignment','radio_number','vehicle','phone','arrive_at','depart_at','notes','is_active','sort_order','user_id','person_id'];
     $fields = []; $params = [];
     foreach ($allowed as $f) {
         if (array_key_exists($f, $b)) { $fields[] = "`$f` = ?"; $params[] = $b[$f]; }
@@ -690,7 +837,6 @@ function eo_getLiveTaskSummary(PDO $pdo, int $userId, string $role): void {
     $planId = eo_intParam('plan_id');
     eo_getPlanOrFail($pdo, $planId);
 
-    $total = (int) $pdo->prepare("SELECT COUNT(*) FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL")->execute([$planId]) ?: 0;
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM event_plan_tasks WHERE event_plan_id = ? AND deleted_at IS NULL");
     $stmt->execute([$planId]);
     $total = (int) $stmt->fetchColumn();
@@ -888,6 +1034,8 @@ $readActions = [
     'getPlanSessions'      => 'eo_getPlanSessions',
     'getPlanTasks'         => 'eo_getPlanTasks',
     'getPlanFiles'         => 'eo_getPlanFiles',
+    // v40 structured schedule reads
+    'getSchedule'          => 'eo_getSchedule',
     // v38 live checklist reads
     'getLiveChecklist'      => 'eo_getLiveChecklist',
     'listLiveSessionStatus' => 'eo_listLiveSessionStatus',
@@ -926,6 +1074,19 @@ $adminActions = [
     'addFile'                   => 'eo_addFile',
     'updateFile'                => 'eo_updateFile',
     'deleteFile'                => 'eo_deleteFile',
+    // v40 structured schedule writes
+    'addScheduleItem'           => 'eo_addScheduleItem',
+    'updateScheduleItem'        => 'eo_updateScheduleItem',
+    'deleteScheduleItem'        => 'eo_deleteScheduleItem',
+    'duplicateScheduleItem'     => 'eo_duplicateScheduleItem',
+    'reorderScheduleItems'      => 'eo_reorderScheduleItems',
+    'setScheduleItemStatus'     => 'eo_setScheduleItemStatus',
+    'addScheduleAssignment'     => 'eo_addScheduleAssignment',
+    'updateScheduleAssignment'  => 'eo_updateScheduleAssignment',
+    'deleteScheduleAssignment'  => 'eo_deleteScheduleAssignment',
+    'addStaffDuty'              => 'eo_addStaffDuty',
+    'updateStaffDuty'           => 'eo_updateStaffDuty',
+    'deleteStaffDuty'           => 'eo_deleteStaffDuty',
     // v38 live checklist writes
     'startLiveChecklist'            => 'eo_startLiveChecklist',
     'updateLiveChecklistStatus' => 'eo_updateLiveChecklistStatus',
