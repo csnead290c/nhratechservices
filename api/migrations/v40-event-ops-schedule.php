@@ -17,8 +17,10 @@
  * Notes:
  *   - schedule_item.status and activity_type are VARCHAR (not ENUM) so future
  *     statuses/types do not require schema changes. Application layer validates.
- *   - scheduled_time / projected_time are VARCHAR(32) to support real-world
- *     printed values like "08:00", "8:00a", "TBD", or "Following TF".
+ *   - Times are split pairs: scheduled_time TIME NULL + scheduled_time_label
+ *     VARCHAR(60) NULL (same for projected_*). Real clock times stay
+ *     machine-readable (sortable, diff-able for delay math, NOW/NEXT);
+ *     sequence/unknown values ("Following TF", "TBD") live in the label.
  *   - Existing freeform event_plan_sections (e.g. event_schedule markdown)
  *     are untouched — they remain as legacy fallback content.
  *
@@ -124,8 +126,10 @@ function v40MigrateEventOpsSchedule(PDO $pdo, bool $dryRun = false): array {
                     day_label           VARCHAR(50) NULL,
                     title               VARCHAR(255) NOT NULL DEFAULT '',
                     sort_order          INT NOT NULL DEFAULT 0,
-                    scheduled_time      VARCHAR(32) NULL,
-                    projected_time      VARCHAR(32) NULL,
+                    scheduled_time      TIME NULL,
+                    scheduled_time_label VARCHAR(60) NULL,
+                    projected_time      TIME NULL,
+                    projected_time_label VARCHAR(60) NULL,
                     activity_type       VARCHAR(32) NOT NULL DEFAULT 'other',
                     category_code       VARCHAR(50) NULL,
                     round_label         VARCHAR(50) NULL,

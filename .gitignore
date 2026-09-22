@@ -23,6 +23,10 @@ ARCHIVE_DEAD_FILES.sh
 # local archive workspace
 src/domain/physics/_legacy/archive/
 
+# local dev/test only (SQLite dev DB + php -S CORS router)
+api/rsa*.db
+api/router.local.php
+
 # node artifacts
 # package-lock.json is tracked for CI (npm ci requires it)
 

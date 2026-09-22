@@ -65,10 +65,75 @@ function eos_validateSessionBelongsToPlan(PDO $pdo, ?int $sessionId, int $planId
 }
 
 /**
+ * Normalize a raw schedule time input into a (time, label) pair.
+ *
+ * Real clock times → 'HH:MM:SS' in the TIME column, label NULL.
+ * Anything else ("TBD", "Following TF", "after Q2") → label, time NULL.
+ * This keeps clock times machine-readable for sorting, delay math, and
+ * NOW/NEXT computation while still allowing printed-schedule phrasing.
+ *
+ * @return array{time: ?string, label: ?string}
+ */
+function eos_normalizeTime($raw): array {
+    if ($raw === null) return ['time' => null, 'label' => null];
+    $v = trim((string) $raw);
+    if ($v === '') return ['time' => null, 'label' => null];
+
+    // "HH:MM[:SS]" optionally with am/pm suffix: 13:30, 8:00, 1:30 PM, 8:00a
+    if (preg_match('/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([aApP][mM]?)?$/', $v, $m)) {
+        $h = (int) $m[1];
+        $min = (int) $m[2];
+        $sec = isset($m[3]) && $m[3] !== '' ? (int) $m[3] : 0;
+        $ampm = strtolower($m[4] ?? '');
+        if ($ampm !== '') {
+            $pm = str_starts_with($ampm, 'p');
+            if ($h === 12) $h = $pm ? 12 : 0;
+            elseif ($pm) $h += 12;
+        }
+        if ($h <= 23 && $min <= 59 && $sec <= 59) {
+            return ['time' => sprintf('%02d:%02d:%02d', $h, $min, $sec), 'label' => null];
+        }
+    }
+    // Hour-only with am/pm: "8a", "5 PM"
+    if (preg_match('/^(\d{1,2})\s*([aApP][mM]?)$/', $v, $m)) {
+        $h = (int) $m[1];
+        $pm = str_starts_with(strtolower($m[2]), 'p');
+        if ($h >= 1 && $h <= 12) {
+            if ($h === 12) $h = $pm ? 12 : 0;
+            elseif ($pm) $h += 12;
+            return ['time' => sprintf('%02d:00:00', $h), 'label' => null];
+        }
+    }
+    return ['time' => null, 'label' => $v];
+}
+
+/**
+ * Resolve the scheduled_/projected_ time pair for a write.
+ * Explicit *_label wins; otherwise the raw value is normalized.
+ *
+ * @return array{0: ?string, 1: ?string} [time, label]
+ */
+function eos_timePair(array $b, string $base): array {
+    $labelKey = $base . '_label';
+    if (isset($b[$labelKey]) && trim((string) $b[$labelKey]) !== '') {
+        return [null, trim((string) $b[$labelKey])];
+    }
+    $r = eos_normalizeTime($b[$base] ?? null);
+    return [$r['time'], $r['label']];
+}
+
+/**
  * Renumber sort_order for all schedule items on a given plan+date,
  * ordering by the provided id sequence (ids not in the list keep their
  * relative order appended at the end).
  */
+/** Empty/whitespace-only strings become NULL (keeps nullable columns clean). */
+function eos_strOrNull($v): ?string {
+    if ($v === null) return null;
+    $v = trim((string) $v);
+    return $v === '' ? null : $v;
+}
+
 function eos_renumberDay(PDO $pdo, int $planId, ?string $date, array $orderedIds): void {
     if ($date === null) {
         $stmt = $pdo->prepare("SELECT id FROM event_schedule_items WHERE event_plan_id = ? AND schedule_date IS NULL AND deleted_at IS NULL ORDER BY sort_order, id");
@@ -210,28 +275,33 @@ function eo_addScheduleItem(PDO $pdo, int $userId, string $role): void {
         $sortOrder = (int) $s->fetchColumn();
     }
 
+    [$schedTime, $schedLabel] = eos_timePair($b, 'scheduled_time');
+    [$projTime, $projLabel]   = eos_timePair($b, 'projected_time');
+
+
     $stmt = $pdo->prepare("
         INSERT INTO event_schedule_items
             (uuid, event_plan_id, session_id, schedule_date, day_label, title, sort_order,
-             scheduled_time, projected_time, activity_type, category_code, round_label,
+             scheduled_time, scheduled_time_label, projected_time, projected_time_label,
+             activity_type, category_code, round_label,
              expected_car_count, comments, scale_required, fuel_required, status,
              actual_start_at, actual_end_at, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         eo_newUuid(), $planId,
         isset($b['session_id']) ? (int) $b['session_id'] : null,
         $date ?: null,
-        $b['day_label'] ?? null,
+        eos_strOrNull($b['day_label'] ?? null),
         $title,
         $sortOrder,
-        $b['scheduled_time'] ?? null,
-        $b['projected_time'] ?? null,
+        $schedTime, $schedLabel,
+        $projTime, $projLabel,
         $activityType,
-        $b['category_code'] ?? null,
-        $b['round_label'] ?? null,
+        eos_strOrNull($b['category_code'] ?? null),
+        eos_strOrNull($b['round_label'] ?? null),
         isset($b['expected_car_count']) && $b['expected_car_count'] !== '' ? (int) $b['expected_car_count'] : null,
-        $b['comments'] ?? null,
+        eos_strOrNull($b['comments'] ?? null),
         !empty($b['scale_required']) ? 1 : 0,
         !empty($b['fuel_required']) ? 1 : 0,
         $status,
@@ -249,7 +319,7 @@ function eo_updateScheduleItem(PDO $pdo, int $userId, string $role): void {
     if (!$itemId) { http_response_code(400); echo json_encode(['error' => 'item_id required']); exit; }
     $item = eos_getScheduleItemOrFail($pdo, $itemId);
 
-    $allowed = ['session_id','schedule_date','day_label','sort_order','scheduled_time','projected_time',
+    $allowed = ['session_id','schedule_date','day_label','sort_order',
                 'activity_type','category_code','round_label','expected_car_count','comments',
                 'scale_required','fuel_required','status','actual_start_at','actual_end_at','title'];
     $enums = [
@@ -270,6 +340,17 @@ function eo_updateScheduleItem(PDO $pdo, int $userId, string $role): void {
             $params[] = $b[$f] === '' ? null : $b[$f];
         }
     }
+
+    // Time pairs: writing either leg recomputes both columns atomically.
+    // 'scheduled_time' = null clears the pair entirely.
+    foreach (['scheduled_time', 'projected_time'] as $base) {
+        if (array_key_exists($base, $b) || array_key_exists($base . '_label', $b)) {
+            [$t, $l] = eos_timePair($b, $base);
+            $fields[] = "`$base` = ?";          $params[] = $t;
+            $fields[] = "`{$base}_label` = ?";  $params[] = $l;
+        }
+    }
+
     if (!$fields) { http_response_code(400); echo json_encode(['error' => 'No fields to update']); exit; }
     $params[] = $itemId;
     $pdo->prepare("UPDATE event_schedule_items SET " . implode(', ', $fields) . " WHERE id = ? AND deleted_at IS NULL")->execute($params);
@@ -300,16 +381,19 @@ function eo_duplicateScheduleItem(PDO $pdo, int $userId, string $role): void {
     $stmt = $pdo->prepare("
         INSERT INTO event_schedule_items
             (uuid, event_plan_id, session_id, schedule_date, day_label, title, sort_order,
-             scheduled_time, projected_time, activity_type, category_code, round_label,
+             scheduled_time, scheduled_time_label, projected_time, projected_time_label,
+             activity_type, category_code, round_label,
              expected_car_count, comments, scale_required, fuel_required, status,
              created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $stmt->execute([
         eo_newUuid(), $planId, $src['session_id'], $src['schedule_date'], $src['day_label'],
         $src['title'],
         (int) $src['sort_order'] + 1,
-        $src['scheduled_time'], $src['projected_time'], $src['activity_type'],
+        $src['scheduled_time'], $src['scheduled_time_label'],
+        $src['projected_time'], $src['projected_time_label'],
+        $src['activity_type'],
         $src['category_code'], $src['round_label'], $src['expected_car_count'],
         $src['comments'], $src['scale_required'], $src['fuel_required'], 'upcoming',
         $userId,

@@ -328,9 +328,10 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
     $insItem = $pdo->prepare("
         INSERT INTO event_schedule_items
             (uuid, event_plan_id, session_id, schedule_date, day_label, title, sort_order,
-             scheduled_time, projected_time, activity_type, category_code, round_label,
+             scheduled_time, scheduled_time_label, projected_time, projected_time_label,
+             activity_type, category_code, round_label,
              expected_car_count, comments, scale_required, fuel_required, status, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ");
     $insAssign = $pdo->prepare("INSERT INTO event_schedule_assignments (event_plan_id,schedule_item_id,staff_id,assignee_name,responsibility,notes,sort_order) VALUES (?,?,?,?,?,?,?)");
     $asStmt = $pdo->prepare("SELECT * FROM event_schedule_assignments WHERE schedule_item_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
@@ -339,7 +340,8 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
             eo_newUuid(), $newId,
             $it['session_id'] !== null ? ($sessionMap[(int) $it['session_id']] ?? null) : null,
             $it['schedule_date'], $it['day_label'], $it['title'], $it['sort_order'],
-            $it['scheduled_time'], $it['projected_time'], $it['activity_type'],
+            $it['scheduled_time'], $it['scheduled_time_label'],
+            $it['projected_time'], $it['projected_time_label'], $it['activity_type'],
             $it['category_code'], $it['round_label'], $it['expected_car_count'],
             $it['comments'], $it['scale_required'], $it['fuel_required'], 'upcoming', $userId,
         ]);
