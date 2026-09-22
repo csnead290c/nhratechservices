@@ -164,6 +164,32 @@ describe('v40 date/time handling and extensibility', () => {
     expect(sched).toMatch(/schedule_date.*\\d\{4\}-\\d\{2\}-\\d\{2\}|preg_match.*schedule_date/s);
   });
 
+  it('times are stored as TIME + label pairs, not VARCHAR-only', () => {
+    const mig = readFileSync(resolve(ROOT, 'api/migrations/v40-event-ops-schedule.php'), 'utf8');
+    const itemsBlock = mig.slice(
+      mig.indexOf('CREATE TABLE IF NOT EXISTS event_schedule_items'),
+    );
+    expect(itemsBlock).toContain('scheduled_time      TIME NULL');
+    expect(itemsBlock).toContain('scheduled_time_label');
+    expect(itemsBlock).toContain('projected_time      TIME NULL');
+    expect(itemsBlock).toContain('projected_time_label');
+    // clock times must NOT be stored as bare VARCHAR
+    expect(itemsBlock).not.toMatch(/scheduled_time\s+VARCHAR/);
+    expect(itemsBlock).not.toMatch(/projected_time\s+VARCHAR/);
+  });
+
+  it('normalizes clock strings to TIME and keeps phrasing as labels', () => {
+    // eos_normalizeTime exists and handles HH:MM, am/pm, and non-clock text
+    expect(sched).toContain('function eos_normalizeTime(');
+    const body = fnBody('eos_normalizeTime');
+    expect(body).toContain('[aApP][mM]?');
+    expect(body).toContain("'label' => \$v");
+    expect(body).toContain("'time' => sprintf");
+    // both insert and update paths use the pair resolver
+    expect(fnBody('eo_addScheduleItem')).toContain("eos_timePair(\$b, 'scheduled_time')");
+    expect(fnBody('eo_updateScheduleItem')).toContain("eos_timePair(\$b, \$base)");
+  });
+
   it('status values are an extensible list (VARCHAR, app-level validation)', () => {
     expect(sched).toContain('EO_SCHEDULE_STATUSES');
     expect(sched).toContain("'called'");

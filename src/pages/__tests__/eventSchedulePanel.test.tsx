@@ -37,7 +37,7 @@ vi.mock('../../domain/eventOps/eventOpsApi', async (importOriginal) => {
 
 import { useIsMobile } from '../../shared/hooks/useResponsive';
 import {
-  getSchedule, addScheduleItem, deleteScheduleItem,
+  getSchedule, addScheduleItem, deleteScheduleItem, addScheduleAssignment,
   duplicateScheduleItem, reorderScheduleItems, setScheduleItemStatus,
 } from '../../domain/eventOps/eventOpsApi';
 import EventSchedulePanel from '../eventops/EventSchedulePanel';
@@ -68,7 +68,8 @@ function item(over: Partial<EventScheduleItem>): EventScheduleItem {
   return {
     id: 1, uuid: '', event_plan_id: 7, session_id: null, schedule_date: '2026-03-13',
     day_label: null, title: 'Tech Team Meeting', sort_order: 0,
-    scheduled_time: '07:30', projected_time: null, activity_type: 'meeting',
+    scheduled_time: '07:30:00', scheduled_time_label: null,
+    projected_time: null, projected_time_label: null, activity_type: 'meeting',
     category_code: null, round_label: null, expected_car_count: null,
     comments: null, scale_required: 0, fuel_required: 0, status: 'upcoming',
     actual_start_at: null, actual_end_at: null, created_by: null,
@@ -78,15 +79,16 @@ function item(over: Partial<EventScheduleItem>): EventScheduleItem {
 }
 
 const ITEMS: EventScheduleItem[] = [
-  item({ id: 1, title: 'Tech Team Meeting', scheduled_time: '07:30' }),
+  item({ id: 1, title: 'Tech Team Meeting', scheduled_time: '07:30:00' }),
   item({
     id: 2, title: 'Top Fuel', category_code: 'TF', round_label: 'Q1',
-    scheduled_time: '14:00', projected_time: '14:15', activity_type: 'racing',
+    scheduled_time: '14:00:00', projected_time: '14:15:00', activity_type: 'racing',
     expected_car_count: 16, scale_required: 1, fuel_required: 1, sort_order: 1,
     comments: 'Lane choice by qualifying',
     assignments: [{ id: 21, schedule_item_id: 2, staff_id: 11, staff_display_name: 'Joey', assignee_name: null, responsibility: 'Lane Checks', notes: null, sort_order: 0 }],
   }),
-  item({ id: 3, title: 'Teardown', schedule_date: '2026-03-15', scheduled_time: '18:00', activity_type: 'teardown', sort_order: 0 }),
+  item({ id: 3, title: 'Teardown', schedule_date: '2026-03-15', scheduled_time: '18:00:00', activity_type: 'teardown', sort_order: 0 }),
+  item({ id: 4, title: 'Contingency', schedule_date: '2026-03-15', scheduled_time: null, scheduled_time_label: 'Following TF Final', sort_order: 1 }),
 ];
 
 function renderPanel(canAdmin = false) {
@@ -126,6 +128,13 @@ describe('EventSchedulePanel — desktop rendering', () => {
     expect(within(row).getByText('Lane choice by qualifying')).toBeInTheDocument();
   });
 
+  it('renders label phrasing for non-clock times and trims HH:MM:SS', async () => {
+    renderPanel();
+    await waitFor(() => screen.getByTestId('schedule-item-4'));
+    expect(within(screen.getByTestId('schedule-item-4')).getByText('Following TF Final')).toBeInTheDocument();
+    expect(within(screen.getByTestId('schedule-item-1')).getByText('07:30')).toBeInTheDocument();
+  });
+
   it('renders schedule-specific assignment summary (staff → responsibility)', async () => {
     renderPanel();
     await waitFor(() => screen.getByTestId('schedule-item-2'));
@@ -146,8 +155,8 @@ describe('EventSchedulePanel — desktop rendering', () => {
     renderPanel(true);
     await waitFor(() => screen.getByTestId('schedule-item-1'));
     expect(screen.getByTestId('add-schedule-item')).toBeInTheDocument();
-    expect(screen.getAllByTitle('Delete').length).toBe(3);
-    expect(screen.getAllByTitle('Duplicate').length).toBe(3);
+    expect(screen.getAllByTitle('Delete').length).toBe(4);
+    expect(screen.getAllByTitle('Duplicate').length).toBe(4);
   });
 
   it('empty state renders when no items', async () => {
@@ -217,6 +226,43 @@ describe('EventSchedulePanel — admin actions', () => {
     fireEvent.change(within(modal).getByPlaceholderText(/Tech Team Meeting/i), { target: { value: 'Funny Car' } });
     fireEvent.click(within(modal).getByTestId('schedule-item-save'));
     await waitFor(() => expect(addScheduleItem).toHaveBeenCalledWith(7, expect.objectContaining({ title: 'Funny Car', activity_type: 'other' })));
+  });
+
+  it('assignee selector defaults to existing staff and passes staff_id', async () => {
+    vi.mocked(addScheduleAssignment).mockResolvedValue({ success: true, assignment_id: 31 });
+    renderPanel(true);
+    await waitFor(() => screen.getByTestId('schedule-item-1'));
+    fireEvent.click(within(screen.getByTestId('schedule-item-1')).getByTitle('Edit'));
+    const modal = await screen.findByTestId('schedule-item-modal');
+    fireEvent.click(within(modal).getByText('+ Add assignment'));
+    // staff select is the primary control — free-text is an explicit fallback option
+    const sel = within(modal).getByLabelText('assignee') as HTMLSelectElement;
+    expect(sel.value).toBe('');
+    fireEvent.change(sel, { target: { value: '11' } });
+    fireEvent.change(within(modal).getByPlaceholderText('Responsibility'), { target: { value: 'Lane Checks' } });
+    // no free-text name input shown for a staff pick
+    expect(within(modal).queryByPlaceholderText(/non-staff assignee/i)).not.toBeInTheDocument();
+    fireEvent.click(within(modal).getByTestId('schedule-item-save'));
+    await waitFor(() => expect(addScheduleAssignment).toHaveBeenCalledWith(1,
+      expect.objectContaining({ staff_id: 11, responsibility: 'Lane Checks' })));
+    expect(vi.mocked(addScheduleAssignment).mock.calls[0][1].assignee_name).toBeUndefined();
+  });
+
+  it('assignee free-text is an explicit fallback via "not on staff list" option', async () => {
+    vi.mocked(addScheduleAssignment).mockResolvedValue({ success: true, assignment_id: 32 });
+    renderPanel(true);
+    await waitFor(() => screen.getByTestId('schedule-item-1'));
+    fireEvent.click(within(screen.getByTestId('schedule-item-1')).getByTitle('Edit'));
+    const modal = await screen.findByTestId('schedule-item-modal');
+    fireEvent.click(within(modal).getByText('+ Add assignment'));
+    const sel = within(modal).getByLabelText('assignee');
+    fireEvent.change(sel, { target: { value: '__other__' } });
+    const nameInput = await within(modal).findByPlaceholderText(/non-staff assignee/i);
+    fireEvent.change(nameInput, { target: { value: 'Volunteer Crew' } });
+    fireEvent.change(within(modal).getByPlaceholderText('Responsibility'), { target: { value: 'Trash run' } });
+    fireEvent.click(within(modal).getByTestId('schedule-item-save'));
+    await waitFor(() => expect(addScheduleAssignment).toHaveBeenCalledWith(1,
+      expect.objectContaining({ staff_id: null, assignee_name: 'Volunteer Crew', responsibility: 'Trash run' })));
   });
 });
 

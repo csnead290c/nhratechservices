@@ -59,9 +59,10 @@ const STAFF: EventPlanStaff[] = [
 const ITEMS: EventScheduleItem[] = [
   {
     id: 2, uuid: '', event_plan_id: 7, session_id: null, schedule_date: '2026-03-13',
-    day_label: null, title: 'Funny Car', sort_order: 0, scheduled_time: '15:00',
-    projected_time: '15:10', activity_type: 'racing', category_code: 'FC',
+    day_label: null, title: 'Funny Car', sort_order: 0, scheduled_time: '15:00:00',
+    projected_time: '15:10:00', activity_type: 'racing', category_code: 'FC',
     round_label: 'R2', expected_car_count: 14, comments: null,
+    scheduled_time_label: null, projected_time_label: null,
     scale_required: 0, fuel_required: 1, status: 'upcoming',
     actual_start_at: null, actual_end_at: null, created_by: null,
     created_at: '', updated_at: '',
