@@ -15,7 +15,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useSearchParams } from 'react-router-dom';
 import {
-  getPlan, getPlanStaff, getSchedule,
+  getPlan, getPlanStaff, getSchedule, fmtScheduleTime,
   type EventPlan, type EventPlanStaff, type EventScheduleItem,
 } from '../domain/eventOps/eventOpsApi';
 import { useIsMobile } from '../shared/hooks/useResponsive';
@@ -121,6 +121,8 @@ export default function EventScheduleSheet() {
         @media print {
           .eo-sheet-nav, .eo-sheet-actions { display: none !important; }
           body { background: #fff !important; }
+          header, footer { display: none !important; }
+          table { font-size: 0.72rem; }
         }
       `}</style>
 
@@ -193,8 +195,8 @@ export default function EventScheduleSheet() {
                 <tbody>
                   {dayItems.map(it => (
                     <tr key={it.id} data-testid={`sheet-item-${it.id}`}>
-                      <td style={{ ...S.td, ...MONO, whiteSpace: 'nowrap', fontWeight: 600 }}>{it.scheduled_time ?? '—'}</td>
-                      <td style={{ ...S.td, ...MONO, whiteSpace: 'nowrap' }}>{it.projected_time ?? '—'}</td>
+                      <td style={{ ...S.td, ...MONO, whiteSpace: 'nowrap', fontWeight: 600 }}>{fmtScheduleTime(it.scheduled_time, it.scheduled_time_label)}</td>
+                      <td style={{ ...S.td, ...MONO, whiteSpace: 'nowrap' }}>{fmtScheduleTime(it.projected_time, it.projected_time_label)}</td>
                       <td style={S.td}>
                         <span style={{ fontWeight: 600 }}>{itemLabel(it)}</span>
                         {it.status !== 'upcoming' && (

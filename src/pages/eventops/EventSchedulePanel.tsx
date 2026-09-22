@@ -26,6 +26,7 @@ import {
   SCHEDULE_STATUSES,
   CATEGORY_SUGGESTIONS,
   RESPONSIBILITY_SUGGESTIONS,
+  fmtScheduleTime,
   type EventPlan,
   type EventPlanStaff,
   type EventPlanSession,
@@ -81,6 +82,8 @@ function statusBadge(status: string) {
 
 // ── Assignment sub-editor (inside item modal) ────────────────────────────────
 
+const OTHER_STAFF = '__other__';
+
 interface DraftAssignment {
   staff_id: number | null;
   assignee_name: string;
@@ -99,11 +102,7 @@ function AssignmentEditor({
 }) {
   const setPending = (i: number, k: keyof DraftAssignment, v: string) => {
     const next = pending.slice();
-    if (k === 'staff_id') {
-      next[i] = { ...next[i], staff_id: v ? parseInt(v, 10) : null };
-    } else {
-      next[i] = { ...next[i], [k]: v };
-    }
+    next[i] = { ...next[i], [k]: v };
     onChangePending(next);
   };
 
@@ -120,14 +119,30 @@ function AssignmentEditor({
       ))}
       {pending.map((p, i) => (
         <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr auto', gap: '0.4rem', marginTop: '0.5rem', alignItems: 'center' }}>
-          <select style={S.input} value={p.staff_id ?? ''} onChange={e => setPending(i, 'staff_id', e.target.value)}>
+          <select
+            style={S.input}
+            value={p.staff_id !== null ? String(p.staff_id) : (p.assignee_name !== null && (p as DraftAssignment & { _other?: boolean })._other ? OTHER_STAFF : '')}
+            onChange={e => {
+              const next = pending.slice();
+              if (e.target.value === OTHER_STAFF) {
+                next[i] = { ...p, staff_id: null, assignee_name: p.assignee_name ?? '' };
+                (next[i] as DraftAssignment & { _other?: boolean })._other = true;
+              } else {
+                next[i] = { ...p, staff_id: e.target.value ? parseInt(e.target.value, 10) : null, assignee_name: '' };
+                delete (next[i] as DraftAssignment & { _other?: boolean })._other;
+              }
+              onChangePending(next);
+            }}
+            aria-label="assignee"
+          >
             <option value="">— Select staff —</option>
             {staff.filter(s => s.is_active !== 0).map(s => <option key={s.id} value={s.id}>{s.display_name}</option>)}
+            <option value={OTHER_STAFF}>Someone not on staff list…</option>
           </select>
           <input style={S.input} list="eo-resp-list" placeholder="Responsibility" value={p.responsibility} onChange={e => setPending(i, 'responsibility', e.target.value)} />
           <button type="button" style={{ ...S.btn, padding: '0.3rem 0.55rem' }} onClick={() => onChangePending(pending.filter((_, j) => j !== i))}>×</button>
-          {!p.staff_id && (
-            <input style={{ ...S.input, gridColumn: '1 / -1' }} placeholder="Assignee name (if not on staff list)" value={p.assignee_name} onChange={e => setPending(i, 'assignee_name', e.target.value)} />
+          {(p as DraftAssignment & { _other?: boolean })._other && (
+            <input style={{ ...S.input, gridColumn: '1 / -1' }} placeholder="Name (one-off / non-staff assignee)" value={p.assignee_name} onChange={e => setPending(i, 'assignee_name', e.target.value)} />
           )}
         </div>
       ))}
@@ -158,8 +173,8 @@ function ScheduleItemModal({ planId, item, defaultDate, staff, sessions, onClose
     schedule_date: item?.schedule_date ?? defaultDate ?? '',
     day_label: item?.day_label ?? '',
     title: item?.title ?? '',
-    scheduled_time: item?.scheduled_time ?? '',
-    projected_time: item?.projected_time ?? '',
+    scheduled_time: item ? (item.scheduled_time_label ?? item.scheduled_time?.slice(0, 5) ?? '') : '',
+    projected_time: item ? (item.projected_time_label ?? item.projected_time?.slice(0, 5) ?? '') : '',
     activity_type: (item?.activity_type ?? 'other') as ActivityType,
     category_code: item?.category_code ?? '',
     round_label: item?.round_label ?? '',
@@ -427,8 +442,8 @@ export default function EventSchedulePanel({
     const summary = assignmentSummary(item);
     return (
       <tr key={item.id} data-testid={`schedule-item-${item.id}`}>
-        <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{item.scheduled_time ?? '—'}</td>
-        <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{item.projected_time ?? '—'}</td>
+        <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{fmtScheduleTime(item.scheduled_time, item.scheduled_time_label)}</td>
+        <td style={{ ...S.td, whiteSpace: 'nowrap' }}>{fmtScheduleTime(item.projected_time, item.projected_time_label)}</td>
         <td style={S.td}>
           <div style={{ fontWeight: 600 }}>{item.title}</div>
           {item.category_code && <span style={{ fontSize: '0.72rem', color: 'var(--color-muted)' }}>{item.category_code}</span>}
@@ -462,12 +477,12 @@ export default function EventSchedulePanel({
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
           <div style={{ minWidth: 0 }}>
             <div style={{ fontWeight: 700, fontSize: '0.88rem' }}>
-              {item.scheduled_time ? <span style={{ color: 'var(--color-primary)', marginRight: '0.4rem' }}>{item.scheduled_time}</span> : null}
+              {(item.scheduled_time || item.scheduled_time_label) ? <span style={{ color: 'var(--color-primary)', marginRight: '0.4rem' }}>{fmtScheduleTime(item.scheduled_time, item.scheduled_time_label)}</span> : null}
               {item.title}
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--color-muted)', marginTop: '0.15rem' }}>
               {[
-                item.projected_time ? `Proj ${item.projected_time}` : null,
+                (item.projected_time || item.projected_time_label) ? `Proj ${fmtScheduleTime(item.projected_time, item.projected_time_label)}` : null,
                 item.category_code,
                 item.round_label,
                 item.expected_car_count != null ? `${item.expected_car_count} cars` : null,

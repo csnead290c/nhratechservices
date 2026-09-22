@@ -130,8 +130,10 @@ export interface EventScheduleItem {
   day_label: string | null;
   title: string;
   sort_order: number;
-  scheduled_time: string | null;
+  scheduled_time: string | null;        // 'HH:MM:SS' when a real clock time
+  scheduled_time_label: string | null;  // 'TBD', 'Following TF', etc.
   projected_time: string | null;
+  projected_time_label: string | null;
   activity_type: string;
   category_code: string | null;
   round_label: string | null;
@@ -814,14 +816,25 @@ export async function getSchedule(planId: number, date?: string): Promise<{ item
   return eoGet('getSchedule', { plan_id: planId, date });
 }
 
+/** Display helper: label phrasing wins; otherwise trim HH:MM:SS → HH:MM. */
+export function fmtScheduleTime(time: string | null, label: string | null): string {
+  if (label) return label;
+  if (!time) return '—';
+  return time.length >= 5 ? time.slice(0, 5) : time;
+}
+
 export interface ScheduleItemInput {
   session_id?: number | null;
   schedule_date?: string | null;
   day_label?: string | null;
   title?: string;
   sort_order?: number;
+  /** Clock time ('13:30') or free phrasing ('TBD', 'Following TF') — the API
+   *  splits it into the TIME column or the label column automatically. */
   scheduled_time?: string | null;
+  scheduled_time_label?: string | null;
   projected_time?: string | null;
+  projected_time_label?: string | null;
   activity_type?: ActivityType;
   category_code?: string | null;
   round_label?: string | null;
