@@ -40,6 +40,7 @@ const EventLiveChecklist = lazy(() => import('../pages/EventLiveChecklist'));
 const EventPostReportBuilder = lazy(() => import('../pages/EventPostReportBuilder'));
 const EventPostReportDetail = lazy(() => import('../pages/EventPostReportDetail'));
 const EventScheduleSheet = lazy(() => import('../pages/EventScheduleSheet'));
+const EventWorkRequests = lazy(() => import('../pages/EventWorkRequests'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -682,6 +683,14 @@ function App() {
                   <EventPostReportDetail />
                 </Suspense>
               </CapabilityRoute>
+            } />
+            {/* Worker-facing staffing requests — auth only, no eventops cap needed */}
+            <Route path="/event-ops/requests" element={
+              <ProtectedRoute>
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventWorkRequests />
+                </Suspense>
+              </ProtectedRoute>
             } />
 
             <Route path="*" element={<NotFound />} />

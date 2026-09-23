@@ -194,7 +194,7 @@ export default function EventPlanDetail() {
 
   const tabContent: Record<TabName, React.ReactNode> = {
     'Overview': renderOverview(),
-    'Staff': <EventStaffPanel planId={planId} staff={staff} canAdmin={canAdmin} onChanged={reload} />,
+    'Staff': <EventStaffPanel planId={planId} parityEventId={plan.parity_event_id} staff={staff} canAdmin={canAdmin} onChanged={reload} />,
     'Schedule': renderSchedule(),
     'Entries': <SectionView sections={sections} keys={['entries']} />,
     'Priority Inspections': <SectionView sections={sections} keys={['priority_inspections']} />,

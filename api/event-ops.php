@@ -18,6 +18,7 @@ require_once __DIR__ . '/functions.php';
 require_once __DIR__ . '/lib/capabilities.php';
 require_once __DIR__ . '/event-ops-reports.php';
 require_once __DIR__ . '/event-ops-schedule.php';
+require_once __DIR__ . '/event-ops-staffing.php';
 
 $pdo = getDB();
 $auth = rsa_requireAuth();
@@ -106,13 +107,21 @@ function eo_newUuid(): string {
 
 function eo_listPlans(PDO $pdo, int $userId, string $role): void {
     eo_requireRead($pdo, $userId, $role);
+    // Canonical identity comes from parity_events (+ parity_tracks) when linked;
+    // plan columns remain as stored fallbacks for unlinked/legacy plans.
     $stmt = $pdo->query("
-        SELECT id, uuid, event_instance_id, parity_event_id, year, event_code, event_date,
-               track_name, title, class_scope, plan_type, status, lifecycle_stage, summary,
-               created_by, approved_by, approved_at, created_at, updated_at
-        FROM event_plans
-        WHERE deleted_at IS NULL
-        ORDER BY year DESC, event_code ASC, created_at DESC
+        SELECT p.id, p.uuid, p.event_instance_id, p.parity_event_id, p.year, p.event_code,
+               p.event_date, p.track_name, p.title, p.class_scope, p.plan_type, p.status,
+               p.lifecycle_stage, p.summary, p.created_by, p.approved_by, p.approved_at,
+               p.created_at, p.updated_at,
+               pe.event_name AS canonical_event_name, pe.race_lookup,
+               pe.start_date_local AS canonical_start, pe.end_date_local AS canonical_end,
+               pt.track_name AS canonical_track, pt.timezone_iana AS event_timezone
+        FROM event_plans p
+        LEFT JOIN parity_events pe ON pe.id = p.parity_event_id
+        LEFT JOIN parity_tracks pt ON pt.id = pe.track_id
+        WHERE p.deleted_at IS NULL
+        ORDER BY p.year DESC, p.event_code ASC, p.created_at DESC
     ");
     rsa_jsonResponse(['plans' => $stmt->fetchAll(PDO::FETCH_ASSOC)]);
 }
@@ -120,22 +129,58 @@ function eo_listPlans(PDO $pdo, int $userId, string $role): void {
 function eo_getPlan(PDO $pdo, int $userId, string $role): void {
     eo_requireRead($pdo, $userId, $role);
     $planId = eo_intParam('plan_id');
-    rsa_jsonResponse(['plan' => eo_getPlanOrFail($pdo, $planId)]);
+    $plan = eo_getPlanOrFail($pdo, $planId);
+    // Attach canonical event context when linked
+    if (!empty($plan['parity_event_id'])) {
+        $stmt = $pdo->prepare("
+            SELECT pe.id, pe.event_name, pe.event_code, pe.season_year, pe.race_lookup,
+                   pe.start_date_local, pe.end_date_local, pe.event_instance_id,
+                   pt.id AS track_id, pt.track_name, pt.city, pt.state, pt.timezone_iana
+            FROM parity_events pe
+            JOIN parity_tracks pt ON pt.id = pe.track_id
+            WHERE pe.id = ?
+        ");
+        $stmt->execute([(int) $plan['parity_event_id']]);
+        $plan['canonical_event'] = $stmt->fetch(PDO::FETCH_ASSOC) ?: null;
+    } else {
+        $plan['canonical_event'] = null;
+    }
+    rsa_jsonResponse(['plan' => $plan]);
 }
 
 function eo_createPlan(PDO $pdo, int $userId, string $role): void {
     eo_requireAdmin($pdo, $userId, $role);
     $b = eo_body();
 
-    $year       = (int) ($b['year'] ?? date('Y'));
-    $eventCode  = trim($b['event_code'] ?? '');
-    $title      = trim($b['title'] ?? '');
+    // Canonical event path: inherit identity from parity_events instead of
+    // requiring the admin to re-enter name/track/dates.
+    $parityEventId = isset($b['parity_event_id']) && $b['parity_event_id'] !== null && $b['parity_event_id'] !== ''
+        ? (int) $b['parity_event_id'] : null;
+    $pe = null;
+    if ($parityEventId) {
+        $stmt = $pdo->prepare("
+            SELECT pe.*, pt.track_name AS track_name_canonical
+            FROM parity_events pe JOIN parity_tracks pt ON pt.id = pe.track_id
+            WHERE pe.id = ?
+        ");
+        $stmt->execute([$parityEventId]);
+        $pe = $stmt->fetch(PDO::FETCH_ASSOC);
+        if (!$pe) {
+            http_response_code(404);
+            echo json_encode(['error' => 'parity_event_id not found']);
+            exit;
+        }
+    }
+
+    $year       = (int) ($b['year'] ?? ($pe['season_year'] ?? date('Y')));
+    $eventCode  = trim($b['event_code'] ?? '') ?: ($pe['event_code'] ?? '');
+    $title      = trim($b['title'] ?? '') ?: ($pe['event_name'] ?? '');
     $planType   = $b['plan_type'] ?? 'pre_event';
     $status     = $b['status'] ?? 'draft';
 
     if (!$eventCode || !$title) {
         http_response_code(400);
-        echo json_encode(['error' => 'event_code and title are required']);
+        echo json_encode(['error' => 'event_code and title are required (or supply parity_event_id to inherit them)']);
         exit;
     }
     eo_validateEnum($planType, ['pre_event','race_day','post_event','template'], 'plan_type');
@@ -147,6 +192,13 @@ function eo_createPlan(PDO $pdo, int $userId, string $role): void {
         http_response_code(400); echo json_encode(['error' => 'event_date must be YYYY-MM-DD']); exit;
     }
 
+    // Identity fields inherited from the canonical event unless overridden
+    if ($pe) {
+        $eventDate = $eventDate ?: ($pe['start_date_local'] ?? null);
+    }
+    $eventInstanceId = $b['event_instance_id'] ?? ($pe['event_instance_id'] ?? null);
+    $trackName = $b['track_name'] ?? ($pe['track_name_canonical'] ?? null);
+
     $stmt = $pdo->prepare("
         INSERT INTO event_plans
             (uuid, event_instance_id, parity_event_id, year, event_code, event_date, track_name, title,
@@ -155,12 +207,12 @@ function eo_createPlan(PDO $pdo, int $userId, string $role): void {
     ");
     $stmt->execute([
         eo_newUuid(),
-        $b['event_instance_id'] ?? null,
-        $b['parity_event_id'] ?? null,
+        $eventInstanceId,
+        $parityEventId,
         $year,
         $eventCode,
         $eventDate ?: null,
-        $b['track_name'] ?? null,
+        $trackName,
         $title,
         $b['class_scope'] ?? null,
         $planType,
@@ -281,29 +333,45 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
         $sessionMap[(int) $s['id']] = (int) $pdo->lastInsertId();
     }
 
-    // Clone staff, keeping old→new id map for duties/assignments
-    $stf = $pdo->prepare("SELECT * FROM event_plan_staff WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
-    $stf->execute([$planId]);
-    $insStaff = $pdo->prepare("INSERT INTO event_plan_staff (event_plan_id,user_id,person_id,display_name,assignment,radio_number,vehicle,phone,arrive_at,depart_at,notes,is_active,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+    // Clone staff roster ONLY when explicitly requested (template reuse).
+    // Confirmed attendance, work requests, travel legs and lodging are
+    // event-specific and are NEVER cloned.
+    $includeStaff = !empty($b['include_staff']);
     $staffMap = [];
-    foreach ($stf->fetchAll(PDO::FETCH_ASSOC) as $s) {
-        $insStaff->execute([
-            $newId, $s['user_id'], $s['person_id'], $s['display_name'], $s['assignment'],
-            $s['radio_number'] ?? null, $s['vehicle'] ?? null, $s['phone'] ?? null,
-            $s['arrive_at'], $s['depart_at'], $s['notes'], $s['is_active'] ?? 1, $s['sort_order'],
-        ]);
-        $staffMap[(int) $s['id']] = (int) $pdo->lastInsertId();
-    }
+    if ($includeStaff) {
+        $stf = $pdo->prepare("SELECT * FROM event_plan_staff WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+        $stf->execute([$planId]);
+        $insStaff = $pdo->prepare("INSERT INTO event_plan_staff (event_plan_id,user_id,person_id,display_name,assignment,radio_number,vehicle,phone,arrive_at,depart_at,notes,is_active,sort_order) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)");
+        foreach ($stf->fetchAll(PDO::FETCH_ASSOC) as $s) {
+            $insStaff->execute([
+                $newId, $s['user_id'], $s['person_id'], $s['display_name'], $s['assignment'],
+                $s['radio_number'] ?? null, $s['vehicle'] ?? null, $s['phone'] ?? null,
+                $s['arrive_at'], $s['depart_at'], $s['notes'], $s['is_active'] ?? 1, $s['sort_order'],
+            ]);
+            $staffMap[(int) $s['id']] = (int) $pdo->lastInsertId();
+        }
 
-    // Clone staff duties
-    if ($staffMap) {
-        $dut = $pdo->prepare("SELECT * FROM event_plan_staff_duties WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
-        $dut->execute([$planId]);
-        $insDuty = $pdo->prepare("INSERT INTO event_plan_staff_duties (event_plan_id,staff_id,duty,sort_order) VALUES (?,?,?,?)");
-        foreach ($dut->fetchAll(PDO::FETCH_ASSOC) as $d) {
-            if (isset($staffMap[(int) $d['staff_id']])) {
-                $insDuty->execute([$newId, $staffMap[(int) $d['staff_id']], $d['duty'], $d['sort_order']]);
+        // Staff duties (function assignments) follow the staff rows
+        if ($staffMap) {
+            $dut = $pdo->prepare("SELECT * FROM event_plan_staff_duties WHERE event_plan_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+            $dut->execute([$planId]);
+            $insDuty = $pdo->prepare("INSERT INTO event_plan_staff_duties (event_plan_id,staff_id,duty,sort_order) VALUES (?,?,?,?)");
+            foreach ($dut->fetchAll(PDO::FETCH_ASSOC) as $d) {
+                if (isset($staffMap[(int) $d['staff_id']])) {
+                    $insDuty->execute([$newId, $staffMap[(int) $d['staff_id']], $d['duty'], $d['sort_order']]);
+                }
             }
+            // Class assignments follow staff too (typical role is reusable)
+            try {
+                $cls = $pdo->prepare("SELECT * FROM event_staff_classes WHERE staff_id = ? AND deleted_at IS NULL ORDER BY sort_order, id");
+                $insCls = $pdo->prepare("INSERT INTO event_staff_classes (staff_id, class_code, is_primary, sort_order) VALUES (?,?,?,?)");
+                foreach ($staffMap as $oldStaff => $newStaff) {
+                    $cls->execute([$oldStaff]);
+                    foreach ($cls->fetchAll(PDO::FETCH_ASSOC) as $c) {
+                        $insCls->execute([$newStaff, $c['class_code'], $c['is_primary'], $c['sort_order']]);
+                    }
+                }
+            } catch (PDOException $e) { /* table may not exist pre-v41 */ }
         }
     }
 
@@ -346,13 +414,17 @@ function eo_clonePlan(PDO $pdo, int $userId, string $role): void {
             $it['comments'], $it['scale_required'], $it['fuel_required'], 'upcoming', $userId,
         ]);
         $newItemId = (int) $pdo->lastInsertId();
-        $asStmt->execute([(int) $it['id']]);
-        foreach ($asStmt->fetchAll(PDO::FETCH_ASSOC) as $a) {
-            $insAssign->execute([
-                $newId, $newItemId,
-                $a['staff_id'] !== null ? ($staffMap[(int) $a['staff_id']] ?? null) : null,
-                $a['assignee_name'], $a['responsibility'], $a['notes'], $a['sort_order'],
-            ]);
+        // Schedule assignments reference staff — only clone when the roster
+        // is being carried over (include_staff).
+        if ($includeStaff) {
+            $asStmt->execute([(int) $it['id']]);
+            foreach ($asStmt->fetchAll(PDO::FETCH_ASSOC) as $a) {
+                $insAssign->execute([
+                    $newId, $newItemId,
+                    $a['staff_id'] !== null ? ($staffMap[(int) $a['staff_id']] ?? null) : null,
+                    $a['assignee_name'], $a['responsibility'], $a['notes'], $a['sort_order'],
+                ]);
+            }
         }
     }
 
@@ -1089,6 +1161,18 @@ $adminActions = [
     'addStaffDuty'              => 'eo_addStaffDuty',
     'updateStaffDuty'           => 'eo_updateStaffDuty',
     'deleteStaffDuty'           => 'eo_deleteStaffDuty',
+    // v41 staffing admin
+    'listEventRequests'         => 'eow_listEventRequests',
+    'getStaffRequest'           => 'eow_getStaffRequest',
+    'decideWorkRequest'         => 'eow_decideWorkRequest',
+    'getStaffDetail'            => 'eow_getStaffDetail',
+    'addStaffClass'             => 'eow_addStaffClass',
+    'deleteStaffClass'          => 'eow_deleteStaffClass',
+    'addTravelLeg'              => 'eow_addTravelLeg',
+    'updateTravelLeg'           => 'eow_updateTravelLeg',
+    'deleteTravelLeg'           => 'eow_deleteTravelLeg',
+    'upsertStaffLodging'        => 'eow_upsertStaffLodging',
+    'getStaffingSummary'        => 'eow_getStaffingSummary',
     // v38 live checklist writes
     'startLiveChecklist'            => 'eo_startLiveChecklist',
     'updateLiveChecklistStatus' => 'eo_updateLiveChecklistStatus',
@@ -1120,7 +1204,22 @@ $adminActions = [
     'deleteReportIncident'             => 'eo_deleteReportIncident',
 ];
 
-if (isset($readActions[$action])) {
+// v41 worker self-service actions — authenticated user, self-scoped by
+// user_id inside the handler. No eventops.* capability required.
+$workerActions = [
+    'listCanonicalEvents'    => 'eow_listCanonicalEvents',
+    'getMyWorkerProfile'     => 'eow_getMyWorkerProfile',
+    'updateMyWorkerProfile'  => 'eow_updateMyWorkerProfile',
+    'getMyRequests'          => 'eow_getMyRequests',
+    'submitWorkRequest'      => 'eow_submitWorkRequest',
+    'updateWorkRequest'      => 'eow_updateWorkRequest',
+    'cancelWorkRequest'      => 'eow_cancelWorkRequest',
+    'searchPersons'          => 'eow_searchPersons',
+];
+
+if (isset($workerActions[$action])) {
+    $workerActions[$action]($pdo, $userId);
+} elseif (isset($readActions[$action])) {
     $readActions[$action]($pdo, $userId, $role);
 } elseif (isset($adminActions[$action])) {
     $adminActions[$action]($pdo, $userId, $role);

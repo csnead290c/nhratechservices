@@ -133,7 +133,7 @@ export default function EventPrePlanEditor() {
   // ── Staff ──────────────────────────────────────────────────────────────
 
   function StaffTab() {
-    return <EventStaffPanel planId={planId} staff={staff} canAdmin={canAdmin} onChanged={reload} />;
+    return <EventStaffPanel planId={planId} parityEventId={plan?.parity_event_id ?? null} staff={staff} canAdmin={canAdmin} onChanged={reload} />;
   }
 
   // ── Sections ───────────────────────────────────────────────────────────

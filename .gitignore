@@ -3,6 +3,7 @@ node_modules
 # API config with credentials (never commit this)
 api/config.php
 api/config_div.php
+api/config.php.*
 
 # Environment files (never commit)
 .env.local
