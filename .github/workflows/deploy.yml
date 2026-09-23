@@ -147,6 +147,11 @@ jobs:
             $SSH_CMD "[ -e \"$ROOT/$path\" ] && rm -f \"$ROOT/$path\" && echo \"removed: $path\" || echo \"not present: $path\""
           }
 
+          # Obsolete unauthenticated bootstrap — removed from the repo; ensure it is
+          # not left behind on the server (it performed schema changes and seeded an
+          # owner account with a hardcoded password).
+          remove_if_exists "api/setup.php"
+          remove_if_exists "deploy.sh"
           remove_if_exists "rsa-icon.png"
           remove_if_exists "rsa-logo.png"
           remove_if_exists "manuals/QUARTER_JR_PRO.md"

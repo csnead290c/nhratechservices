@@ -177,20 +177,28 @@ EMAIL;
  * Get database connection via PDO
  * Creates connection using constants from config.php
  */
-function getDB(): PDO {
-    $host = defined('DB_HOST') ? DB_HOST : 'localhost';
-    $dbname = defined('DB_NAME') ? DB_NAME : '';
-    $user = defined('DB_USER') ? DB_USER : '';
-    $pass = defined('DB_PASS') ? DB_PASS : '';
-    
-    $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
-    $options = [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-        PDO::ATTR_EMULATE_PREPARES => false,
-    ];
-    
-    return new PDO($dsn, $user, $pass, $options);
+if (!function_exists('getDB')) {
+    function getDB(): PDO {
+        if (defined('DB_TYPE') && DB_TYPE === 'sqlite' && defined('DB_PATH')) {
+            $pdo = new PDO('sqlite:' . DB_PATH);
+            $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+            $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
+            return $pdo;
+        }
+        $host = defined('DB_HOST') ? DB_HOST : 'localhost';
+        $dbname = defined('DB_NAME') ? DB_NAME : '';
+        $user = defined('DB_USER') ? DB_USER : '';
+        $pass = defined('DB_PASS') ? DB_PASS : '';
+
+        $dsn = "mysql:host=$host;dbname=$dbname;charset=utf8mb4";
+        $options = [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+        ];
+
+        return new PDO($dsn, $user, $pass, $options);
+    }
 }
 
 // Wrapper functions that use our rsa_ versions

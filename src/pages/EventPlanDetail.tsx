@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useCapabilities } from '../domain/config/useCapabilities';
 import {
@@ -6,11 +6,13 @@ import {
   type EventPlan, type EventPlanStaff, type EventPlanSection,
   type EventPlanSession, type EventPlanTask, type EventPlanFile,
 } from '../domain/eventOps/eventOpsApi';
+import EventSchedulePanel from './eventops/EventSchedulePanel';
+import EventStaffPanel from './eventops/EventStaffPanel';
 
 const S = {
   page:    { padding: '1.5rem 2rem', maxWidth: '1100px', margin: '0 auto' } as React.CSSProperties,
   back:    { fontSize: '0.85rem', color: 'var(--color-primary)', textDecoration: 'none', display: 'inline-block', marginBottom: '1rem' } as React.CSSProperties,
-  header:  { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem' } as React.CSSProperties,
+  header:  { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem', marginBottom: '1.5rem', flexWrap: 'wrap' as const } as React.CSSProperties,
   h1:      { fontSize: '1.4rem', fontWeight: 700, color: 'var(--color-text)', margin: 0 } as React.CSSProperties,
   meta:    { fontSize: '0.8rem', color: 'var(--color-muted)', marginTop: '0.3rem' } as React.CSSProperties,
   btn:     { padding: '0.45rem 0.9rem', borderRadius: '6px', border: 'none', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 } as React.CSSProperties,
@@ -27,7 +29,7 @@ const S = {
   error:   { padding: '1rem', backgroundColor: '#fef2f2', border: '1px solid #fca5a5', borderRadius: '6px', color: '#991b1b' } as React.CSSProperties,
 };
 
-const TABS = ['Overview', 'Staff', 'Schedule/Map', 'Entries', 'Priority Inspections', 'Session Plan', 'Incident Plan', 'Files'] as const;
+const TABS = ['Overview', 'Staff', 'Schedule', 'Entries', 'Priority Inspections', 'Session Plan', 'Incident Plan', 'Files'] as const;
 type TabName = typeof TABS[number];
 
 function priorityColor(p: string) { return p === 'high' ? '#dc2626' : p === 'normal' ? '#2563eb' : '#6b7280'; }
@@ -60,9 +62,8 @@ export default function EventPlanDetail() {
   const [error, setError]       = useState('');
   const [activeTab, setActiveTab] = useState<TabName>('Overview');
 
-  useEffect(() => {
-    if (!planId) return;
-    Promise.all([
+  const reload = useCallback(() => {
+    return Promise.all([
       getPlan(planId),
       getPlanStaff(planId),
       getPlanSections(planId),
@@ -76,9 +77,13 @@ export default function EventPlanDetail() {
       setSessions(ses.sessions);
       setTasks(t.tasks);
       setFiles(f.files);
-      setLoading(false);
-    }).catch(e => { setError(e.message); setLoading(false); });
+    });
   }, [planId]);
+
+  useEffect(() => {
+    if (!planId) return;
+    reload().then(() => setLoading(false)).catch(e => { setError(e.message); setLoading(false); });
+  }, [planId, reload]);
 
   if (loading) return <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-muted)' }}>Loading…</div>;
   if (error)   return <div style={{ padding: '2rem' }}><div style={S.error}>{error}</div></div>;
@@ -92,16 +97,19 @@ export default function EventPlanDetail() {
             {[
               ['Year', plan!.year],
               ['Event Code', plan!.event_code],
+              ['Event Date', plan!.event_date ?? '—'],
               ['Track', plan!.track_name ?? '—'],
+              ['Linked Event Instance', plan!.event_instance_id ? `#${plan!.event_instance_id}` : '—'],
               ['Class Scope', plan!.class_scope ?? 'All'],
               ['Plan Type', plan!.plan_type.replace('_', ' ')],
               ['Status', plan!.status.replace('_', ' ')],
+              ['Lifecycle', (plan!.lifecycle_stage ?? 'pre_event').replace('_', ' ')],
               ['Summary', plan!.summary ?? '—'],
               ['Created', new Date(plan!.created_at).toLocaleString()],
               ['Updated', new Date(plan!.updated_at).toLocaleString()],
             ].map(([label, val]) => (
               <tr key={String(label)}>
-                <td style={{ padding: '0.4rem 1rem 0.4rem 0', fontWeight: 600, color: 'var(--color-muted)', width: '140px', verticalAlign: 'top' }}>{label}</td>
+                <td style={{ padding: '0.4rem 1rem 0.4rem 0', fontWeight: 600, color: 'var(--color-muted)', width: '160px', verticalAlign: 'top' }}>{label}</td>
                 <td style={{ padding: '0.4rem 0', color: 'var(--color-text)' }}>{String(val)}</td>
               </tr>
             ))}
@@ -111,21 +119,29 @@ export default function EventPlanDetail() {
     );
   }
 
-  function renderStaff() {
-    if (!staff.length) return <div style={S.empty}>No staff assigned yet.</div>;
+  function renderSchedule() {
+    const mapSections = sections.filter(s => s.section_key === 'event_map');
+    const legacy = sections.filter(s => s.section_key === 'event_schedule');
     return (
-      <table style={S.table}>
-        <thead><tr><th style={S.th}>Name</th><th style={S.th}>Assignment</th><th style={S.th}>Arrive</th><th style={S.th}>Depart</th><th style={S.th}>Notes</th></tr></thead>
-        <tbody>{staff.map(s => (
-          <tr key={s.id}>
-            <td style={S.td}>{s.display_name}</td>
-            <td style={S.td}>{s.assignment}</td>
-            <td style={S.td}>{s.arrive_at ? new Date(s.arrive_at).toLocaleString() : '—'}</td>
-            <td style={S.td}>{s.depart_at ? new Date(s.depart_at).toLocaleString() : '—'}</td>
-            <td style={S.td}>{s.notes ?? '—'}</td>
-          </tr>
-        ))}</tbody>
-      </table>
+      <div>
+        <EventSchedulePanel planId={planId} plan={plan!} staff={staff} sessions={sessions} canAdmin={canAdmin} />
+        {legacy.length > 0 && (
+          <div>
+            <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-muted)', margin: '0.5rem 0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Legacy schedule notes
+            </h3>
+            <SectionView sections={sections} keys={['event_schedule']} />
+          </div>
+        )}
+        {mapSections.length > 0 && (
+          <div>
+            <h3 style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--color-muted)', margin: '0.5rem 0', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Map
+            </h3>
+            <SectionView sections={sections} keys={['event_map']} />
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -160,24 +176,26 @@ export default function EventPlanDetail() {
   function renderFiles() {
     if (!files.length) return <div style={S.empty}>No files attached yet.</div>;
     return (
-      <table style={S.table}>
-        <thead><tr><th style={S.th}>Type</th><th style={S.th}>Title</th><th style={S.th}>Link</th><th style={S.th}>Notes</th></tr></thead>
-        <tbody>{files.map(f => (
-          <tr key={f.id}>
-            <td style={S.td}>{f.file_type}</td>
-            <td style={S.td}>{f.title}</td>
-            <td style={S.td}>{f.url ? <a href={f.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary)' }}>Open</a> : '—'}</td>
-            <td style={S.td}>{f.notes ?? '—'}</td>
-          </tr>
-        ))}</tbody>
-      </table>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={S.table}>
+          <thead><tr><th style={S.th}>Type</th><th style={S.th}>Title</th><th style={S.th}>Link</th><th style={S.th}>Notes</th></tr></thead>
+          <tbody>{files.map(f => (
+            <tr key={f.id}>
+              <td style={S.td}>{f.file_type}</td>
+              <td style={S.td}>{f.title}</td>
+              <td style={S.td}>{f.url ? <a href={f.url} target="_blank" rel="noreferrer" style={{ color: 'var(--color-primary)' }}>Open</a> : '—'}</td>
+              <td style={S.td}>{f.notes ?? '—'}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      </div>
     );
   }
 
   const tabContent: Record<TabName, React.ReactNode> = {
     'Overview': renderOverview(),
-    'Staff': renderStaff(),
-    'Schedule/Map': <SectionView sections={sections} keys={['event_schedule', 'event_map']} />,
+    'Staff': <EventStaffPanel planId={planId} parityEventId={plan.parity_event_id} staff={staff} canAdmin={canAdmin} onChanged={reload} />,
+    'Schedule': renderSchedule(),
     'Entries': <SectionView sections={sections} keys={['entries']} />,
     'Priority Inspections': <SectionView sections={sections} keys={['priority_inspections']} />,
     'Session Plan': renderSessions(),
@@ -193,7 +211,14 @@ export default function EventPlanDetail() {
           <h1 style={S.h1}>{plan.title}</h1>
           <div style={S.meta}>{plan.year} · {plan.event_code}{plan.track_name ? ` · ${plan.track_name}` : ''}</div>
         </div>
-        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <Link
+            to={`/event-ops/${planId}/sheet`}
+            data-testid="schedule-sheet-link"
+            style={{ ...S.btn, backgroundColor: '#0f766e', color: '#fff', textDecoration: 'none' } as React.CSSProperties}
+          >
+            Schedule Sheet
+          </Link>
           <Link
             to={`/event-ops/${planId}/live`}
             data-testid="live-checklist-link"

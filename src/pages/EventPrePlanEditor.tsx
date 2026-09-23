@@ -3,13 +3,14 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useCapabilities } from '../domain/config/useCapabilities';
 import {
   getPlan, getPlanStaff, getPlanSections, getPlanSessions, getPlanTasks, getPlanFiles,
-  updatePlan, addStaff, deleteStaff, addSection, updateSection, deleteSection,
+  updatePlan, addSection, updateSection, deleteSection,
   addSession, deleteSession, addTask, deleteTask, addFile, deleteFile,
   type EventPlan, type EventPlanStaff, type EventPlanSection,
   type EventPlanSession, type EventPlanTask, type EventPlanFile,
-  type PlanStatus,
+  type PlanStatus, type LifecycleStage,
 } from '../domain/eventOps/eventOpsApi';
 import { NITRO_PRE_EVENT_TEMPLATE } from '../domain/eventOps/nitroTemplate';
+import EventStaffPanel from './eventops/EventStaffPanel';
 
 const S = {
   page:    { padding: '1.5rem 2rem', maxWidth: '1100px', margin: '0 auto' } as React.CSSProperties,
@@ -85,6 +86,8 @@ export default function EventPrePlanEditor() {
       title: plan!.title, track_name: plan!.track_name ?? '',
       class_scope: plan!.class_scope ?? '', status: plan!.status,
       summary: plan!.summary ?? '',
+      event_date: plan!.event_date ?? '',
+      lifecycle_stage: plan!.lifecycle_stage ?? 'pre_event',
     });
     const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setForm(f => ({ ...f, [k]: e.target.value }));
@@ -92,7 +95,7 @@ export default function EventPrePlanEditor() {
     async function save() {
       setSaving(true);
       try {
-        await updatePlan(planId, { title: form.title, track_name: form.track_name || undefined, class_scope: form.class_scope || undefined, status: form.status as PlanStatus, summary: form.summary || undefined });
+        await updatePlan(planId, { title: form.title, track_name: form.track_name || undefined, class_scope: form.class_scope || undefined, status: form.status as PlanStatus, summary: form.summary || undefined, event_date: form.event_date || undefined, lifecycle_stage: form.lifecycle_stage as LifecycleStage });
         await reload();
         showToast(true, 'Plan info saved.');
       } catch (e: unknown) { showToast(false, e instanceof Error ? e.message : 'Save failed'); }
@@ -108,6 +111,12 @@ export default function EventPrePlanEditor() {
         <input style={S.input} value={form.track_name} onChange={set('track_name')} placeholder="Auto Club Raceway at Pomona" />
         <label style={S.label}>Class Scope</label>
         <input style={S.input} value={form.class_scope} onChange={set('class_scope')} placeholder="TF,FC or blank for all" />
+        <label style={S.label}>Event Date (first day)</label>
+        <input style={S.input} type="date" value={form.event_date} onChange={set('event_date')} />
+        <label style={S.label}>Lifecycle Stage</label>
+        <select style={S.input} value={form.lifecycle_stage} onChange={set('lifecycle_stage')}>
+          {(['draft','pre_event','live','complete','reviewed'] as const).map(s => <option key={s} value={s}>{s.replace('_',' ')}</option>)}
+        </select>
         <label style={S.label}>Status</label>
         <select style={S.input} value={form.status} onChange={set('status')}>
           {(['draft','pending_review','approved','archived'] as const).map(s => <option key={s} value={s}>{s.replace('_',' ')}</option>)}
@@ -124,47 +133,7 @@ export default function EventPrePlanEditor() {
   // ── Staff ──────────────────────────────────────────────────────────────
 
   function StaffTab() {
-    const [form, setForm] = useState({ display_name: '', assignment: '', notes: '' });
-    const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) => setForm(f => ({ ...f, [k]: e.target.value }));
-    async function add() {
-      if (!form.display_name || !form.assignment) { showToast(false, 'Name and assignment required'); return; }
-      setSaving(true);
-      try { await addStaff(planId, form); await reload(); setForm({ display_name:'', assignment:'', notes:'' }); showToast(true, 'Staff added.'); }
-      catch (e: unknown) { showToast(false, e instanceof Error ? e.message : 'Failed'); }
-      setSaving(false);
-    }
-    async function remove(staffId: number) {
-      if (!confirm('Remove this staff member?')) return;
-      setSaving(true);
-      try { await deleteStaff(staffId); await reload(); showToast(true, 'Removed.'); }
-      catch (e: unknown) { showToast(false, e instanceof Error ? e.message : 'Failed'); }
-      setSaving(false);
-    }
-    return (
-      <div>
-        <div style={S.card}>
-          <h2 style={S.h2}>Add Staff</h2>
-          <label style={S.label}>Name</label>
-          <input style={S.input} value={form.display_name} onChange={set('display_name')} placeholder="Full name" />
-          <label style={S.label}>Assignment / Role</label>
-          <input style={S.input} value={form.assignment} onChange={set('assignment')} placeholder="e.g. Chief Tech Inspector" />
-          <label style={S.label}>Notes</label>
-          <input style={S.input} value={form.notes} onChange={set('notes')} />
-          <div style={{ marginTop:'0.75rem' }}><button style={{ ...S.btn, ...S.btnPrim }} onClick={add} disabled={saving}>Add</button></div>
-        </div>
-        {staff.length > 0 && (
-          <div style={S.card}>
-            <h2 style={S.h2}>Current Staff ({staff.length})</h2>
-            {staff.map(s => (
-              <div key={s.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'0.4rem 0', borderBottom:'1px solid var(--color-border)' }}>
-                <div><strong>{s.display_name}</strong> — {s.assignment}{s.notes ? <span style={{ color:'var(--color-muted)', fontSize:'0.8rem' }}> · {s.notes}</span> : ''}</div>
-                <button style={{ ...S.btn, ...S.btnDang, padding:'0.25rem 0.6rem' }} onClick={() => remove(s.id)}>×</button>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    );
+    return <EventStaffPanel planId={planId} parityEventId={plan?.parity_event_id ?? null} staff={staff} canAdmin={canAdmin} onChanged={reload} />;
   }
 
   // ── Sections ───────────────────────────────────────────────────────────

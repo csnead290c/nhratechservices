@@ -39,6 +39,8 @@ const EventPrePlanEditor = lazy(() => import('../pages/EventPrePlanEditor'));
 const EventLiveChecklist = lazy(() => import('../pages/EventLiveChecklist'));
 const EventPostReportBuilder = lazy(() => import('../pages/EventPostReportBuilder'));
 const EventPostReportDetail = lazy(() => import('../pages/EventPostReportDetail'));
+const EventScheduleSheet = lazy(() => import('../pages/EventScheduleSheet'));
+const EventWorkRequests = lazy(() => import('../pages/EventWorkRequests'));
 
 function UserMenu() {
   const { user, isAuthenticated, logout } = useAuth();
@@ -214,6 +216,10 @@ function Navigation() {
       )}
       {canAccessEventOps && (
         <Link to="/event-ops" style={navLinkStyle(isActive('/event-ops'))} onClick={close}>Event Ops</Link>
+      )}
+      {/* Worker-facing staffing requests — any authenticated user, no eventops cap */}
+      {isLoggedIn && (
+        <Link to="/event-ops/requests" style={navLinkStyle(isActive('/event-ops/requests'))} onClick={close}>Work an Event</Link>
       )}
     </>
   );
@@ -654,6 +660,13 @@ function App() {
                 </Suspense>
               </CapabilityRoute>
             } />
+            <Route path="/event-ops/:id/sheet" element={
+              <CapabilityRoute requireCap="eventops.read">
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventScheduleSheet />
+                </Suspense>
+              </CapabilityRoute>
+            } />
             <Route path="/event-ops/:id/live" element={
               <CapabilityRoute requireCap="eventops.read">
                 <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
@@ -674,6 +687,14 @@ function App() {
                   <EventPostReportDetail />
                 </Suspense>
               </CapabilityRoute>
+            } />
+            {/* Worker-facing staffing requests — auth only, no eventops cap needed */}
+            <Route path="/event-ops/requests" element={
+              <ProtectedRoute>
+                <Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center' }}>Loading...</div>}>
+                  <EventWorkRequests />
+                </Suspense>
+              </ProtectedRoute>
             } />
 
             <Route path="*" element={<NotFound />} />

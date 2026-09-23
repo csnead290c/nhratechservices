@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useCapabilities } from '../domain/config/useCapabilities';
-import { listPlans, createPlan, type EventPlan, type PlanType } from '../domain/eventOps/eventOpsApi';
+import { listPlans, createPlan, listCanonicalEvents, type EventPlan, type PlanType, type CanonicalEventListItem } from '../domain/eventOps/eventOpsApi';
 
 const S = {
   page:     { padding: '1.5rem 2rem', maxWidth: '1100px', margin: '0 auto' } as React.CSSProperties,
@@ -36,19 +36,43 @@ interface CreateModalProps {
 }
 
 function CreatePlanModal({ onClose, onCreated }: CreateModalProps) {
-  const [form, setForm] = useState({ year: new Date().getFullYear(), event_code: '', title: '', track_name: '', class_scope: '', plan_type: 'pre_event' as PlanType });
+  const [form, setForm] = useState({ year: new Date().getFullYear(), event_code: '', title: '', track_name: '', class_scope: '', plan_type: 'pre_event' as PlanType, event_date: '' });
+  const [parityEventId, setParityEventId] = useState('');
+  const [events, setEvents] = useState<CanonicalEventListItem[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
+
+  // Canonical event identity lives in parity_events — admins select the event
+  // rather than re-entering name/track/dates. Standalone stays as an escape
+  // hatch for events not yet in the parity catalog.
+  useEffect(() => {
+    listCanonicalEvents()
+      .then(r => setEvents(r.events))
+      .catch(() => { /* canonical list unavailable — standalone still works */ });
+  }, []);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [k]: k === 'year' ? parseInt(e.target.value) || f.year : e.target.value }));
 
+  const linked = parityEventId !== '';
+  const linkedEvent = events.find(x => String(x.id) === parityEventId);
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.event_code.trim() || !form.title.trim()) { setErr('Event Code and Title are required.'); return; }
+    if (!linked && (!form.event_code.trim() || !form.title.trim())) { setErr('Event Code and Title are required for a standalone plan.'); return; }
     setSaving(true); setErr('');
     try {
-      const res = await createPlan({ ...form, track_name: form.track_name || undefined, class_scope: form.class_scope || undefined });
+      const res = await createPlan({
+        ...(linked ? { parity_event_id: parseInt(parityEventId, 10) } : {
+          year: form.year,
+          event_code: form.event_code,
+          title: form.title,
+          track_name: form.track_name || undefined,
+          event_date: form.event_date || undefined,
+        }),
+        class_scope: form.class_scope || undefined,
+        plan_type: form.plan_type,
+      });
       onCreated(res.plan_id);
     } catch (ex: unknown) {
       setErr(ex instanceof Error ? ex.message : 'Failed to create plan');
@@ -62,14 +86,34 @@ function CreatePlanModal({ onClose, onCreated }: CreateModalProps) {
         <h2 style={{ margin: '0 0 0.25rem', fontSize: '1.1rem', fontWeight: 700 }}>New Event Plan</h2>
         {err && <div style={{ ...S.error, marginTop: '0.75rem' }}>{err}</div>}
         <form onSubmit={submit}>
-          <label style={S.label}>Year</label>
-          <input style={S.input} type="number" value={form.year} onChange={set('year')} min={2020} max={2040} required />
-          <label style={S.label}>Event Code *</label>
-          <input style={S.input} placeholder="e.g. POMONA_Q1" value={form.event_code} onChange={set('event_code')} required />
-          <label style={S.label}>Title *</label>
-          <input style={S.input} placeholder="e.g. 2026 Winternationals Pre-Event Plan" value={form.title} onChange={set('title')} required />
-          <label style={S.label}>Track Name</label>
-          <input style={S.input} placeholder="e.g. Auto Club Raceway at Pomona" value={form.track_name} onChange={set('track_name')} />
+          <label style={S.label}>Event</label>
+          <select style={S.input} value={parityEventId} onChange={e => setParityEventId(e.target.value)} data-testid="parity-event-select">
+            <option value="">— standalone plan (manual entry) —</option>
+            {events.map(ev => (
+              <option key={ev.id} value={ev.id}>
+                {ev.season_year} {ev.event_name}{ev.event_code ? ` (${ev.event_code})` : ''}{ev.city ? ` — ${ev.city}, ${ev.state}` : ''}
+              </option>
+            ))}
+          </select>
+          {linked && linkedEvent && (
+            <div style={{ marginTop: '0.5rem', fontSize: '0.8rem', color: 'var(--color-muted)' }} data-testid="linked-event-summary">
+              {linkedEvent.track_name} · {linkedEvent.start_date_local} → {linkedEvent.end_date_local} · {linkedEvent.timezone_iana}
+            </div>
+          )}
+          {!linked && (
+            <>
+              <label style={S.label}>Year</label>
+              <input style={S.input} type="number" value={form.year} onChange={set('year')} min={2020} max={2040} required />
+              <label style={S.label}>Event Code *</label>
+              <input style={S.input} placeholder="e.g. POMONA_Q1" value={form.event_code} onChange={set('event_code')} required />
+              <label style={S.label}>Title *</label>
+              <input style={S.input} placeholder="e.g. 2026 Winternationals Pre-Event Plan" value={form.title} onChange={set('title')} required />
+              <label style={S.label}>Track Name</label>
+              <input style={S.input} placeholder="e.g. Auto Club Raceway at Pomona" value={form.track_name} onChange={set('track_name')} />
+              <label style={S.label}>Event Date (first day)</label>
+              <input style={S.input} type="date" value={form.event_date} onChange={set('event_date')} />
+            </>
+          )}
           <label style={S.label}>Class Scope</label>
           <input style={S.input} placeholder="e.g. TF,FC or leave blank for all" value={form.class_scope} onChange={set('class_scope')} />
           <label style={S.label}>Plan Type</label>

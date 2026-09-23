@@ -55,10 +55,127 @@ async function eoPost<T>(action: string, body: Record<string, unknown>): Promise
 
 export type PlanType = 'pre_event' | 'race_day' | 'post_event' | 'template';
 export type PlanStatus = 'draft' | 'pending_review' | 'approved' | 'archived';
+export type LifecycleStage = 'draft' | 'pre_event' | 'live' | 'complete' | 'reviewed';
 export type TaskType = 'inspection' | 'survey' | 'briefing' | 'logistics' | 'safety' | 'admin' | 'other';
 export type TaskPriority = 'high' | 'normal' | 'low';
 export type TaskStatus = 'open' | 'in_progress' | 'completed' | 'deferred' | 'cancelled';
 export type FileType = 'map' | 'schedule' | 'entry_list' | 'manual' | 'report' | 'photo' | 'other';
+
+// ── v40 Structured Schedule types ────────────────────────────────────────
+
+export type ScheduleStatus = 'upcoming' | 'called' | 'running' | 'complete' | 'delayed' | 'cancelled';
+export type ActivityType =
+  | 'racing' | 'meeting' | 'inspection' | 'contingency'
+  | 'parade' | 'teardown' | 'secure' | 'break' | 'other';
+
+export const SCHEDULE_STATUSES: { value: ScheduleStatus; label: string }[] = [
+  { value: 'upcoming',  label: 'Upcoming' },
+  { value: 'called',    label: 'Called' },
+  { value: 'running',   label: 'Running' },
+  { value: 'complete',  label: 'Complete' },
+  { value: 'delayed',   label: 'Delayed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+
+export const ACTIVITY_TYPES: { value: ActivityType; label: string }[] = [
+  { value: 'racing',      label: 'Racing' },
+  { value: 'meeting',     label: 'Meeting' },
+  { value: 'inspection',  label: 'Inspection' },
+  { value: 'contingency', label: 'Contingency' },
+  { value: 'parade',      label: 'Parade' },
+  { value: 'teardown',    label: 'Teardown' },
+  { value: 'secure',      label: 'Secure' },
+  { value: 'break',       label: 'Break' },
+  { value: 'other',       label: 'Other' },
+];
+
+/** Suggested class/category codes for datalist autocomplete (not exhaustive). */
+export const CATEGORY_SUGGESTIONS = [
+  'TF', 'FC', 'PS', 'PSM', 'PM', 'TS', 'TD', 'TAD', 'TAFC', 'Comp', 'SG', 'SC', 'ST', 'SS',
+];
+
+/** Suggested staff duty labels (not exhaustive — free text allowed). */
+export const DUTY_SUGGESTIONS = [
+  'TF/FC', 'PS/PSM', 'FSS/TS', 'Fuel Check', 'Scales', 'Shutoffs', 'TV Antenna',
+  'Water Station', 'Ice/Drinks', 'Clean Cabinets', 'Clean Counters/Floors',
+  'Chassis Certifications', 'Lane Checks', 'Contingency', 'Winner Data',
+];
+
+/** Suggested per-session responsibilities for schedule assignments. */
+export const RESPONSIBILITY_SUGGESTIONS = [
+  'Lane Checks', 'Contingency', 'Winner Data', 'Winner Data + Contingency',
+  'Fuel Check', 'Scales', 'Shutoffs', 'Inspection', 'Staging',
+];
+
+export interface EventScheduleAssignment {
+  id: number;
+  event_plan_id: number;
+  schedule_item_id: number;
+  staff_id: number | null;
+  assignee_name: string | null;
+  responsibility: string;
+  notes: string | null;
+  sort_order: number;
+  staff_display_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EventScheduleItem {
+  id: number;
+  uuid: string;
+  event_plan_id: number;
+  session_id: number | null;
+  schedule_date: string | null;
+  day_label: string | null;
+  title: string;
+  sort_order: number;
+  scheduled_time: string | null;        // 'HH:MM:SS' when a real clock time
+  scheduled_time_label: string | null;  // 'TBD', 'Following TF', etc.
+  projected_time: string | null;
+  projected_time_label: string | null;
+  activity_type: string;
+  category_code: string | null;
+  round_label: string | null;
+  expected_car_count: number | null;
+  comments: string | null;
+  scale_required: number;
+  fuel_required: number;
+  status: ScheduleStatus;
+  actual_start_at: string | null;
+  actual_end_at: string | null;
+  created_by: number | null;
+  created_at: string;
+  updated_at: string;
+  assignments: EventScheduleAssignment[];
+}
+
+export interface EventStaffDuty {
+  id: number;
+  event_plan_id: number;
+  staff_id: number;
+  duty: string;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Canonical event identity, resolved from parity_events + parity_tracks. */
+export interface CanonicalEvent {
+  id: number;
+  event_name: string;
+  event_code: string | null;
+  season_year: number;
+  race_lookup: string | null;
+  start_date_local: string | null;
+  end_date_local: string | null;
+  event_instance_id: number | null;
+  track_id: number;
+  track_name: string | null;
+  city: string | null;
+  state: string | null;
+  timezone_iana: string | null;
+}
 
 export interface EventPlan {
   id: number;
@@ -67,17 +184,20 @@ export interface EventPlan {
   parity_event_id: number | null;
   year: number;
   event_code: string;
+  event_date: string | null;
   track_name: string | null;
   title: string;
   class_scope: string | null;
   plan_type: PlanType;
   status: PlanStatus;
+  lifecycle_stage: LifecycleStage;
   summary: string | null;
   created_by: number;
   approved_by: number | null;
   approved_at: string | null;
   created_at: string;
   updated_at: string;
+  canonical_event?: CanonicalEvent | null;
 }
 
 export interface EventPlanStaff {
@@ -87,12 +207,17 @@ export interface EventPlanStaff {
   person_id: number | null;
   display_name: string;
   assignment: string;
+  radio_number: string | null;
+  vehicle: string | null;
+  phone: string | null;
   arrive_at: string | null;
   depart_at: string | null;
   notes: string | null;
+  is_active: number;
   sort_order: number;
   created_at: string;
   updated_at: string;
+  duties?: EventStaffDuty[];
 }
 
 export interface EventPlanSection {
@@ -198,15 +323,18 @@ export async function getPlanFiles(planId: number): Promise<{ files: EventPlanFi
 // ── Plan admin actions ─────────────────────────────────────────────────────
 
 export async function createPlan(data: {
-  year: number;
-  event_code: string;
-  title: string;
+  year?: number;
+  event_code?: string;
+  title?: string;
   track_name?: string;
+  event_date?: string;
   class_scope?: string;
   plan_type?: PlanType;
   status?: PlanStatus;
+  lifecycle_stage?: LifecycleStage;
   summary?: string;
   event_instance_id?: number;
+  /** When provided, event identity (code/name/dates/track) is inherited from parity_events. */
   parity_event_id?: number;
 }): Promise<{ success: boolean; plan_id: number }> {
   return eoPost('createPlan', data);
@@ -220,7 +348,16 @@ export async function softDeletePlan(planId: number): Promise<{ success: boolean
   return eoPost('softDeletePlan', { plan_id: planId });
 }
 
-export async function clonePlan(planId: number, overrides?: { title?: string; event_code?: string; year?: number; event_instance_id?: number }): Promise<{ success: boolean; plan_id: number }> {
+export async function clonePlan(planId: number, overrides?: {
+  title?: string;
+  event_code?: string;
+  year?: number;
+  event_instance_id?: number;
+  parity_event_id?: number;
+  /** Copy staff roster + duties/classes + schedule assignments. Travel,
+   *  lodging, and work requests are never cloned. */
+  include_staff?: boolean;
+}): Promise<{ success: boolean; plan_id: number }> {
   return eoPost('clonePlan', { plan_id: planId, ...overrides });
 }
 
@@ -235,10 +372,15 @@ export async function addStaff(planId: number, data: {
   assignment: string;
   user_id?: number;
   person_id?: number;
+  radio_number?: string;
+  vehicle?: string;
+  phone?: string;
   arrive_at?: string;
   depart_at?: string;
   notes?: string;
+  is_active?: number;
   sort_order?: number;
+  duties?: string[];
 }): Promise<{ success: boolean; staff_id: number }> {
   return eoPost('addStaff', { plan_id: planId, ...data });
 }
@@ -694,4 +836,436 @@ export async function addReportIncident(reportId: number, payload: { title: stri
 
 export async function deleteReportIncident(reportId: number, incidentRefId: number): Promise<{ success: boolean }> {
   return eoPost('deleteReportIncident', { report_id: reportId, incident_ref_id: incidentRefId });
+}
+
+// ── v40 Structured Schedule actions ─────────────────────────────────────────
+
+export async function getSchedule(planId: number, date?: string): Promise<{ items: EventScheduleItem[]; days: string[] }> {
+  return eoGet('getSchedule', { plan_id: planId, date });
+}
+
+/** Display helper: label phrasing wins; otherwise trim HH:MM:SS → HH:MM. */
+export function fmtScheduleTime(time: string | null, label: string | null): string {
+  if (label) return label;
+  if (!time) return '—';
+  return time.length >= 5 ? time.slice(0, 5) : time;
+}
+
+export interface ScheduleItemInput {
+  session_id?: number | null;
+  schedule_date?: string | null;
+  day_label?: string | null;
+  title?: string;
+  sort_order?: number;
+  /** Clock time ('13:30') or free phrasing ('TBD', 'Following TF') — the API
+   *  splits it into the TIME column or the label column automatically. */
+  scheduled_time?: string | null;
+  scheduled_time_label?: string | null;
+  projected_time?: string | null;
+  projected_time_label?: string | null;
+  activity_type?: ActivityType;
+  category_code?: string | null;
+  round_label?: string | null;
+  expected_car_count?: number | null;
+  comments?: string | null;
+  scale_required?: number;
+  fuel_required?: number;
+  status?: ScheduleStatus;
+  actual_start_at?: string | null;
+  actual_end_at?: string | null;
+}
+
+export async function addScheduleItem(planId: number, data: ScheduleItemInput & { title: string }): Promise<{ success: boolean; item_id: number }> {
+  return eoPost('addScheduleItem', { plan_id: planId, ...data });
+}
+
+export async function updateScheduleItem(itemId: number, data: ScheduleItemInput): Promise<{ success: boolean }> {
+  return eoPost('updateScheduleItem', { item_id: itemId, ...data });
+}
+
+export async function deleteScheduleItem(itemId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteScheduleItem', { item_id: itemId });
+}
+
+export async function duplicateScheduleItem(itemId: number): Promise<{ success: boolean; item_id: number }> {
+  return eoPost('duplicateScheduleItem', { item_id: itemId });
+}
+
+export async function reorderScheduleItems(planId: number, itemIds: number[]): Promise<{ success: boolean }> {
+  return eoPost('reorderScheduleItems', { plan_id: planId, item_ids: itemIds });
+}
+
+export async function setScheduleItemStatus(itemId: number, status: ScheduleStatus): Promise<{ success: boolean }> {
+  return eoPost('setScheduleItemStatus', { item_id: itemId, status });
+}
+
+export async function addScheduleAssignment(itemId: number, data: {
+  staff_id?: number | null;
+  assignee_name?: string;
+  responsibility: string;
+  notes?: string;
+  sort_order?: number;
+}): Promise<{ success: boolean; assignment_id: number }> {
+  return eoPost('addScheduleAssignment', { schedule_item_id: itemId, ...data });
+}
+
+export async function updateScheduleAssignment(assignmentId: number, data: {
+  staff_id?: number | null;
+  assignee_name?: string | null;
+  responsibility?: string;
+  notes?: string | null;
+  sort_order?: number;
+}): Promise<{ success: boolean }> {
+  return eoPost('updateScheduleAssignment', { assignment_id: assignmentId, ...data });
+}
+
+export async function deleteScheduleAssignment(assignmentId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteScheduleAssignment', { assignment_id: assignmentId });
+}
+
+// ── v40 Staff duty actions ──────────────────────────────────────────────────
+
+export async function addStaffDuty(planId: number, staffId: number, duty: string, sortOrder?: number): Promise<{ success: boolean; duty_id: number }> {
+  return eoPost('addStaffDuty', { plan_id: planId, staff_id: staffId, duty, sort_order: sortOrder });
+}
+
+export async function updateStaffDuty(dutyId: number, data: { duty?: string; sort_order?: number }): Promise<{ success: boolean }> {
+  return eoPost('updateStaffDuty', { duty_id: dutyId, ...data });
+}
+
+export async function deleteStaffDuty(dutyId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteStaffDuty', { duty_id: dutyId });
+}
+
+// ── v41 Staffing types ──────────────────────────────────────────────────────
+
+export type RequestStatus = 'requested' | 'confirmed' | 'waitlisted' | 'declined' | 'cancelled';
+export type AvailabilityKind = 'full' | 'partial';
+export type TravelIntent = 'drive' | 'fly' | 'local' | 'other';
+export type LodgingIntent = 'hotel' | 'motorhome' | 'none' | 'other';
+export type RoommatePref = 'specific_person' | 'no_preference' | 'private_room' | 'not_applicable';
+export type DietaryCategory = 'none' | 'vegetarian' | 'vegan' | 'gluten_free' | 'dairy_free' | 'allergy' | 'other';
+export type TravelMode = 'fly' | 'drive' | 'local' | 'other';
+export type TravelLeg = 'outbound' | 'return' | 'other';
+export type LodgingType = 'hotel' | 'motorhome' | 'none' | 'other';
+
+export const REQUEST_STATUSES: { value: RequestStatus; label: string }[] = [
+  { value: 'requested',  label: 'Requested' },
+  { value: 'confirmed',  label: 'Confirmed' },
+  { value: 'waitlisted', label: 'Waitlisted' },
+  { value: 'declined',   label: 'Declined' },
+  { value: 'cancelled',  label: 'Cancelled' },
+];
+
+export const TRAVEL_INTENTS: { value: TravelIntent; label: string }[] = [
+  { value: 'drive', label: 'Drive' },
+  { value: 'fly',   label: 'Fly' },
+  { value: 'local', label: 'Local / None' },
+  { value: 'other', label: 'Other' },
+];
+
+export const LODGING_INTENTS: { value: LodgingIntent; label: string }[] = [
+  { value: 'hotel',     label: 'Hotel' },
+  { value: 'motorhome', label: 'Motorhome' },
+  { value: 'none',      label: 'None / Local' },
+  { value: 'other',     label: 'Other' },
+];
+
+export const ROOMMATE_PREFS: { value: RoommatePref; label: string }[] = [
+  { value: 'specific_person', label: 'Specific Person' },
+  { value: 'no_preference',   label: 'No Preference' },
+  { value: 'private_room',    label: 'Private Room Requested' },
+  { value: 'not_applicable',  label: 'Not Applicable' },
+];
+
+export const DIETARY_CATEGORIES: { value: DietaryCategory; label: string }[] = [
+  { value: 'none',        label: 'None' },
+  { value: 'vegetarian',  label: 'Vegetarian' },
+  { value: 'vegan',       label: 'Vegan' },
+  { value: 'gluten_free', label: 'Gluten-free' },
+  { value: 'dairy_free',  label: 'Dairy-free' },
+  { value: 'allergy',     label: 'Allergy / food restriction' },
+  { value: 'other',       label: 'Other' },
+];
+
+export const BEVERAGE_SUGGESTIONS = [
+  'Water', 'Diet Coke', 'Coke Zero', 'Coke', 'Dr Pepper', 'Diet Dr Pepper',
+  'Sprite', 'Gatorade', 'Energy Drink', 'Coffee',
+];
+
+/** Class codes suggested for structured staff class assignments (canonical parity categories). */
+export const CLASS_SUGGESTIONS = CATEGORY_SUGGESTIONS;
+
+export interface CanonicalEventListItem {
+  id: number;
+  event_name: string;
+  event_code: string | null;
+  season_year: number;
+  race_lookup: string | null;
+  start_date_local: string | null;
+  end_date_local: string | null;
+  event_instance_id: number | null;
+  track_name: string | null;
+  city: string | null;
+  state: string | null;
+  timezone_iana: string | null;
+}
+
+export interface EventWorkRequest {
+  id: number;
+  uuid: string;
+  parity_event_id: number;
+  user_id: number;
+  person_id: number | null;
+  status: RequestStatus;
+  availability: AvailabilityKind;
+  available_from: string | null;
+  available_through: string | null;
+  travel_intent: TravelIntent | null;
+  lodging_intent: LodgingIntent | null;
+  roommate_pref: RoommatePref | null;
+  roommate_person_id: number | null;
+  roommate_name: string | null;
+  dietary_category?: DietaryCategory | null;   // only present for admin/owner views
+  dietary_detail?: string | null;              // only present for admin/owner views
+  notes: string | null;
+  requested_at: string;
+  decided_at: string | null;
+  decided_by: number | null;
+  decision_note: string | null;
+  event_plan_staff_id: number | null;
+  created_at: string;
+  updated_at: string;
+  // joined fields
+  user_name?: string | null;
+  user_email?: string | null;
+  roommate_person_name?: string | null;
+  event_name?: string;
+  event_code?: string | null;
+  season_year?: number;
+  start_date_local?: string | null;
+  end_date_local?: string | null;
+  track_name?: string | null;
+  beverages?: string[];
+  dietary_on_file?: boolean;
+  profile_beverages?: string[];
+  profile_dietary_category?: DietaryCategory | null;
+  profile_dietary_detail?: string | null;
+  history?: { status: RequestStatus; note: string | null; changed_by: number | null; created_at: string }[];
+}
+
+export interface EventWorkerProfile {
+  id?: number;
+  user_id?: number;
+  phone: string | null;
+  travel_default: TravelIntent | null;
+  dietary_category: DietaryCategory | null;
+  dietary_detail: string | null;
+  notes: string | null;
+}
+
+export interface EventStaffClass {
+  id: number;
+  staff_id: number;
+  class_code: string;
+  is_primary: number;
+  sort_order: number;
+}
+
+export interface EventStaffTravelLeg {
+  id: number;
+  staff_id: number;
+  leg: TravelLeg;
+  mode: TravelMode;
+  airline: string | null;
+  flight_number: string | null;
+  origin_code: string | null;
+  dest_code: string | null;
+  depart_at: string | null;
+  arrive_at: string | null;
+  vehicle_desc: string | null;
+  carpool_with_staff_id: number | null;
+  carpool_with_name?: string | null;
+  confirmation: string | null;
+  notes: string | null;
+}
+
+export interface EventStaffLodging {
+  id: number;
+  staff_id: number;
+  type: LodgingType;
+  property_name: string | null;
+  check_in: string | null;
+  check_out: string | null;
+  confirmation: string | null;
+  room_number: string | null;
+  roommate_staff_id: number | null;
+  roommate_name: string | null;
+  roommate_staff_name?: string | null;
+  site_notes: string | null;
+  notes: string | null;
+}
+
+export interface EventStaffDetail {
+  staff: EventPlanStaff;
+  classes: EventStaffClass[];
+  duties: EventStaffDuty[];
+  travel: EventStaffTravelLeg[];
+  lodging: EventStaffLodging | null;
+  request: EventWorkRequest | null;
+}
+
+export interface StaffingSummary {
+  requests: Record<RequestStatus, number>;
+  travel: Record<string, number>;
+  lodging_intent: Record<string, number>;
+  beverages: { beverage: string; n: number }[];
+  dietary_on_file: number;
+  coverage: string[];
+  covered_duties: string[];
+  staff_count: number;
+}
+
+export interface PersonSearchResult {
+  id: number;
+  display_name: string;
+  person_type: string | null;
+}
+
+// ── v41 Worker self-service actions ─────────────────────────────────────────
+
+export async function listCanonicalEvents(opts?: { upcoming?: boolean; season_year?: number }): Promise<{ events: CanonicalEventListItem[] }> {
+  return eoGet('listCanonicalEvents', {
+    upcoming: opts?.upcoming ? 1 : undefined,
+    season_year: opts?.season_year,
+  });
+}
+
+export async function getMyWorkerProfile(): Promise<{ profile: EventWorkerProfile | null; beverages: string[] }> {
+  return eoGet('getMyWorkerProfile');
+}
+
+export async function updateMyWorkerProfile(data: {
+  phone?: string;
+  travel_default?: TravelIntent | null;
+  dietary_category?: DietaryCategory | null;
+  dietary_detail?: string | null;
+  notes?: string | null;
+  beverages?: string[];
+}): Promise<{ success: boolean; profile_id: number }> {
+  return eoPost('updateMyWorkerProfile', { ...data });
+}
+
+export async function getMyRequests(): Promise<{ requests: EventWorkRequest[] }> {
+  return eoGet('getMyRequests');
+}
+
+export type WorkRequestInput = {
+  parity_event_id: number;
+  availability?: AvailabilityKind;
+  available_from?: string | null;
+  available_through?: string | null;
+  travel_intent?: TravelIntent | null;
+  lodging_intent?: LodgingIntent | null;
+  roommate_pref?: RoommatePref | null;
+  roommate_person_id?: number | null;
+  roommate_name?: string | null;
+  dietary_category?: DietaryCategory | null;
+  dietary_detail?: string | null;
+  notes?: string | null;
+  beverages?: string[];
+};
+
+export async function submitWorkRequest(data: WorkRequestInput): Promise<{ success: boolean; request_id: number }> {
+  return eoPost('submitWorkRequest', { ...data });
+}
+
+export async function updateWorkRequest(requestId: number, data: Partial<Omit<WorkRequestInput, 'parity_event_id'>>): Promise<{ success: boolean }> {
+  return eoPost('updateWorkRequest', { request_id: requestId, ...data });
+}
+
+export async function cancelWorkRequest(requestId: number): Promise<{ success: boolean }> {
+  return eoPost('cancelWorkRequest', { request_id: requestId });
+}
+
+export async function searchPersons(q: string): Promise<{ persons: PersonSearchResult[] }> {
+  return eoGet('searchPersons', { q });
+}
+
+// ── v41 Admin staffing actions ──────────────────────────────────────────────
+
+export async function listEventRequests(planId: number): Promise<{ requests: EventWorkRequest[] }> {
+  return eoGet('listEventRequests', { plan_id: planId });
+}
+
+export async function getStaffRequest(requestId: number): Promise<{ request: EventWorkRequest }> {
+  return eoGet('getStaffRequest', { request_id: requestId });
+}
+
+export async function decideWorkRequest(requestId: number, planId: number, decision: RequestStatus, note?: string): Promise<{ success: boolean; staff_id: number | null }> {
+  return eoPost('decideWorkRequest', { request_id: requestId, plan_id: planId, decision, note });
+}
+
+export async function adminLinkWorkerPerson(userId: number, personId: number | null): Promise<{ success: boolean }> {
+  return eoPost('adminLinkWorkerPerson', { user_id: userId, person_id: personId });
+}
+
+export async function getStaffDetail(staffId: number): Promise<EventStaffDetail> {
+  return eoGet('getStaffDetail', { staff_id: staffId });
+}
+
+export async function addStaffClass(staffId: number, classCode: string, isPrimary?: boolean): Promise<{ success: boolean; class_id: number }> {
+  return eoPost('addStaffClass', { staff_id: staffId, class_code: classCode, is_primary: isPrimary ? 1 : 0 });
+}
+
+export async function deleteStaffClass(classId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteStaffClass', { class_id: classId });
+}
+
+export type TravelLegInput = {
+  leg?: TravelLeg;
+  mode: TravelMode;
+  airline?: string | null;
+  flight_number?: string | null;
+  origin_code?: string | null;
+  dest_code?: string | null;
+  depart_at?: string | null;
+  arrive_at?: string | null;
+  vehicle_desc?: string | null;
+  carpool_with_staff_id?: number | null;
+  confirmation?: string | null;
+  notes?: string | null;
+}
+
+export async function addTravelLeg(staffId: number, data: TravelLegInput): Promise<{ success: boolean; leg_id: number }> {
+  return eoPost('addTravelLeg', { staff_id: staffId, ...data });
+}
+
+export async function updateTravelLeg(legId: number, data: Partial<TravelLegInput>): Promise<{ success: boolean }> {
+  return eoPost('updateTravelLeg', { leg_id: legId, ...data } as Record<string, unknown>);
+}
+
+export async function deleteTravelLeg(legId: number): Promise<{ success: boolean }> {
+  return eoPost('deleteTravelLeg', { leg_id: legId });
+}
+
+export type StaffLodgingInput = {
+  type: LodgingType;
+  property_name?: string | null;
+  check_in?: string | null;
+  check_out?: string | null;
+  confirmation?: string | null;
+  room_number?: string | null;
+  roommate_staff_id?: number | null;
+  roommate_name?: string | null;
+  site_notes?: string | null;
+  notes?: string | null;
+}
+
+export async function upsertStaffLodging(staffId: number, data: StaffLodgingInput): Promise<{ success: boolean; lodging_id: number }> {
+  return eoPost('upsertStaffLodging', { staff_id: staffId, ...data });
+}
+
+export async function getStaffingSummary(planId: number): Promise<{ summary: StaffingSummary }> {
+  return eoGet('getStaffingSummary', { plan_id: planId });
 }
