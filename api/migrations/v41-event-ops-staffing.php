@@ -55,6 +55,11 @@
  */
 
 function v41ColumnExists(PDO $pdo, string $table, string $column): bool {
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?");
+        $stmt->execute([$table, $column]);
+        return (int) $stmt->fetchColumn() > 0;
+    }
     $stmt = $pdo->prepare("
         SELECT COUNT(*) FROM INFORMATION_SCHEMA.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?
@@ -64,6 +69,11 @@ function v41ColumnExists(PDO $pdo, string $table, string $column): bool {
 }
 
 function v41TableExists(PDO $pdo, string $table): bool {
+    if ($pdo->getAttribute(PDO::ATTR_DRIVER_NAME) === 'sqlite') {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?");
+        $stmt->execute([$table]);
+        return (int) $stmt->fetchColumn() > 0;
+    }
     $stmt = $pdo->prepare("
         SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES
         WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?

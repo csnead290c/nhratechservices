@@ -4,6 +4,7 @@ node_modules
 api/config.php
 api/config_div.php
 api/config.php.*
+api/config.*-test.php
 
 # Environment files (never commit)
 .env.local

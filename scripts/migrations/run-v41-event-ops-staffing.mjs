@@ -47,8 +47,9 @@ if (!existsSync(SHARED_MIGRATION)) {
 
 const cliScript = `<?php
 $dryRun = in_array('--dry-run', $argv) || !in_array('--apply', $argv);
-require_once __DIR__ . '/../../config.php';
-require_once __DIR__ . '/../../functions.php';
+$_cfg = getenv('NHRATS_API_CONFIG');
+require_once $_cfg ? $_cfg : __DIR__ . '/../config.php';
+require_once __DIR__ . '/../functions.php';
 require_once __DIR__ . '/v41-event-ops-staffing.php';
 if (php_sapi_name() !== 'cli') { fwrite(STDERR, "ERROR: CLI only\\n"); exit(1); }
 $pdo = getDB();
