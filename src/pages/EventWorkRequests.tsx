@@ -412,10 +412,10 @@ export default function EventWorkRequests() {
               <div style={{ display: 'flex', gap: '0.4rem' }}>
                 {!mine && <button style={{ ...S.btn, ...S.btnPrim }} onClick={() => setOpenEvent(open ? null : ev.id)} data-testid={`request-btn-${ev.id}`}>Request to Work</button>}
                 {mine && mine.status === 'requested' && (
-                  <>
-                    <button style={S.btn} onClick={() => setOpenEvent(open ? null : ev.id)}>Edit Request</button>
-                    <button style={{ ...S.btn, color: '#dc2626' }} onClick={() => { if (confirm('Cancel your request for this event?')) cancelWorkRequest(mine.id).then(reload); }}>Cancel</button>
-                  </>
+                  <button style={S.btn} onClick={() => setOpenEvent(open ? null : ev.id)}>Edit Request</button>
+                )}
+                {mine && (mine.status === 'requested' || mine.status === 'waitlisted') && (
+                  <button style={{ ...S.btn, color: '#dc2626' }} onClick={() => { if (confirm('Cancel your request for this event?')) cancelWorkRequest(mine.id).then(reload); }}>Cancel</button>
                 )}
               </div>
             </div>

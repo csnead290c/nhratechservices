@@ -1202,8 +1202,12 @@ export async function getStaffRequest(requestId: number): Promise<{ request: Eve
   return eoGet('getStaffRequest', { request_id: requestId });
 }
 
-export async function decideWorkRequest(requestId: number, decision: RequestStatus, note?: string): Promise<{ success: boolean; staff_id: number | null }> {
-  return eoPost('decideWorkRequest', { request_id: requestId, decision, note });
+export async function decideWorkRequest(requestId: number, planId: number, decision: RequestStatus, note?: string): Promise<{ success: boolean; staff_id: number | null }> {
+  return eoPost('decideWorkRequest', { request_id: requestId, plan_id: planId, decision, note });
+}
+
+export async function adminLinkWorkerPerson(userId: number, personId: number | null): Promise<{ success: boolean }> {
+  return eoPost('adminLinkWorkerPerson', { user_id: userId, person_id: personId });
 }
 
 export async function getStaffDetail(staffId: number): Promise<EventStaffDetail> {

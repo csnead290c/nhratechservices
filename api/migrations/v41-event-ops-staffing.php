@@ -384,7 +384,7 @@ function v41MigrateEventOpsStaffing(PDO $pdo, bool $dryRun = false): array {
             ");
             $result['messages'][] = "✓ event_staff_lodging created";
         } catch (PDOException $e) {
-            $result['messages'][] = "· event_staff_lodging already exists — skipped";
+            $result['errors'][] = "Failed to create event_staff_lodging: " . $e->getMessage();
         }
     } else {
         $result['messages'][] = "· event_staff_lodging already exists — skipped";

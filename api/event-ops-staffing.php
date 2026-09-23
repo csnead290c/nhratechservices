@@ -18,6 +18,22 @@
  */
 
 const EOW_REQUEST_STATUSES   = ['requested', 'confirmed', 'waitlisted', 'declined', 'cancelled'];
+
+// Allowed request status transitions (admin decisions). Anything not listed
+// here is rejected — the request lifecycle and the confirmed roster must never
+// contradict each other.
+const EOW_DECISION_TRANSITIONS = [
+    'requested'  => ['confirmed', 'waitlisted', 'declined'],
+    'waitlisted' => ['confirmed', 'declined'],
+    'declined'   => ['requested'],
+    'cancelled'  => ['requested'],
+    'confirmed'  => ['cancelled', 'declined', 'waitlisted', 'requested'],
+];
+
+// Statuses a worker may cancel their own request from. 'confirmed' is
+// deliberately absent: cancelling a confirmed assignment must reconcile the
+// roster row, which is an admin action (decideWorkRequest).
+const EOW_WORKER_CANCELLABLE = ['requested', 'waitlisted'];
 const EOW_AVAILABILITY       = ['full', 'partial'];
 const EOW_TRAVEL_INTENT      = ['drive', 'fly', 'local', 'other'];
 const EOW_LODGING_INTENT     = ['hotel', 'motorhome', 'none', 'other'];
@@ -68,16 +84,44 @@ function eow_getStaffOrFail(PDO $pdo, int $id): array {
     return $s;
 }
 
-/** Plan that owns a canonical event (latest non-deleted plan for the parity event). */
-function eow_planForParityEvent(PDO $pdo, int $parityEventId): ?array {
-    $stmt = $pdo->prepare("
-        SELECT * FROM event_plans
-        WHERE parity_event_id = ? AND deleted_at IS NULL
-        ORDER BY id DESC LIMIT 1
-    ");
-    $stmt->execute([$parityEventId]);
-    $p = $stmt->fetch(PDO::FETCH_ASSOC);
-    return $p ?: null;
+/** Trusted person linkage for a user. There is no users↔persons column; the
+ *  only trusted mapping is event_worker_profiles.person_id, which may only be
+ *  set by an admin (adminLinkWorkerPerson). Returns null when unlinked. */
+function eow_trustedPersonId(PDO $pdo, int $userId): ?int {
+    $profile = eow_profile($pdo, $userId);
+    return $profile && $profile['person_id'] !== null ? (int) $profile['person_id'] : null;
+}
+
+/** Normalize merged request fields — enforces dependent-field invariants for
+ *  BOTH submit and update so the frontend cannot leave contradictory state. */
+function eow_normalizeRequestFields(array $v): array {
+    if (($v['availability'] ?? 'full') === 'partial') {
+        if (empty($v['available_from']) || empty($v['available_through'])) {
+            eow_fail('partial availability requires available_from and available_through');
+        }
+        if (strtotime((string) $v['available_from']) > strtotime((string) $v['available_through'])) {
+            eow_fail('available_from must be on or before available_through');
+        }
+    } else {
+        $v['available_from'] = null;
+        $v['available_through'] = null;
+    }
+    // Roommate preference only applies to hotel lodging.
+    if (($v['lodging_intent'] ?? null) !== 'hotel') {
+        $v['roommate_pref'] = null;
+        $v['roommate_person_id'] = null;
+        $v['roommate_name'] = null;
+    }
+    // Roommate identifiers only exist for specific_person.
+    if (($v['roommate_pref'] ?? null) !== 'specific_person') {
+        $v['roommate_person_id'] = null;
+        $v['roommate_name'] = null;
+    }
+    // Dietary detail is meaningless without a real category.
+    if (empty($v['dietary_category']) || $v['dietary_category'] === 'none') {
+        $v['dietary_detail'] = null;
+    }
+    return $v;
 }
 
 function eow_requestBeverages(PDO $pdo, int $requestId): array {
@@ -182,10 +226,12 @@ function eow_updateMyWorkerProfile(PDO $pdo, int $userId): void {
                      $fields['dietary_detail'], $fields['notes'], $userId]);
         $profileId = (int) $existing['id'];
     } else {
+        // person_id is NOT worker-supplied — it is a trusted linkage set only
+        // by an admin (adminLinkWorkerPerson). Self-created profiles start NULL.
         $pdo->prepare("
             INSERT INTO event_worker_profiles (uuid, user_id, person_id, phone, travel_default, dietary_category, dietary_detail, notes)
-            VALUES (?,?,?,?,?,?,?,?)
-        ")->execute([eo_newUuid(), $userId, $b['person_id'] ?? null, $fields['phone'], $fields['travel_default'],
+            VALUES (?,?,NULL,?,?,?,?,?)
+        ")->execute([eo_newUuid(), $userId, $fields['phone'], $fields['travel_default'],
                      $fields['dietary_category'], $fields['dietary_detail'], $fields['notes']]);
         $profileId = (int) $pdo->lastInsertId();
     }
@@ -244,37 +290,41 @@ function eow_submitWorkRequest(PDO $pdo, int $userId): void {
         eow_fail("An active request already exists for this event (request #{$dup['id']}, status {$dup['status']})", 409);
     }
 
-    $availability = $b['availability'] ?? 'full';
-    eo_validateEnum($availability, EOW_AVAILABILITY, 'availability');
-    $availFrom = eow_dtOrNull($b['available_from'] ?? null);
-    $availThru = eow_dtOrNull($b['available_through'] ?? null);
-    if ($availability === 'partial' && (!$availFrom || !$availThru)) {
-        eow_fail('partial availability requires available_from and available_through');
-    }
+    $v = [
+        'availability'       => $b['availability'] ?? 'full',
+        'available_from'     => eow_dtOrNull($b['available_from'] ?? null),
+        'available_through'  => eow_dtOrNull($b['available_through'] ?? null),
+        'travel_intent'      => $b['travel_intent'] ?? null,
+        'lodging_intent'     => $b['lodging_intent'] ?? null,
+        'roommate_pref'      => $b['roommate_pref'] ?? null,
+        'roommate_person_id' => null,
+        'roommate_name'      => null,
+        'dietary_category'   => $b['dietary_category'] ?? null,
+        'dietary_detail'     => $b['dietary_detail'] ?? null,
+        'notes'              => $b['notes'] ?? null,
+    ];
+    eo_validateEnum($v['availability'], EOW_AVAILABILITY, 'availability');
+    if ($v['travel_intent'])  eo_validateEnum($v['travel_intent'], EOW_TRAVEL_INTENT, 'travel_intent');
+    if ($v['lodging_intent']) eo_validateEnum($v['lodging_intent'], EOW_LODGING_INTENT, 'lodging_intent');
+    if ($v['roommate_pref'])  eo_validateEnum($v['roommate_pref'], EOW_ROOMMATE_PREF, 'roommate_pref');
+    if ($v['dietary_category']) eo_validateEnum($v['dietary_category'], EOW_DIETARY_CATEGORIES, 'dietary_category');
 
-    $travel  = $b['travel_intent'] ?? null;
-    if ($travel) eo_validateEnum($travel, EOW_TRAVEL_INTENT, 'travel_intent');
-    $lodging = $b['lodging_intent'] ?? null;
-    if ($lodging) eo_validateEnum($lodging, EOW_LODGING_INTENT, 'lodging_intent');
-
-    $roommatePref = $b['roommate_pref'] ?? null;
-    if ($roommatePref) eo_validateEnum($roommatePref, EOW_ROOMMATE_PREF, 'roommate_pref');
-    $roommatePersonId = null;
-    $roommateName = null;
-    if ($roommatePref === 'specific_person') {
+    // Roommate identifiers are only read when lodging allows a roommate pref.
+    if (($v['lodging_intent'] ?? null) === 'hotel' && $v['roommate_pref'] === 'specific_person') {
         if (!empty($b['roommate_person_id'])) {
-            $roommatePersonId = (int) $b['roommate_person_id'];
+            $v['roommate_person_id'] = (int) $b['roommate_person_id'];
             $chk = $pdo->prepare("SELECT id FROM persons WHERE id = ?");
-            $chk->execute([$roommatePersonId]);
+            $chk->execute([$v['roommate_person_id']]);
             if (!$chk->fetchColumn()) eow_fail('roommate_person_id not found');
         } else {
-            $roommateName = trim((string) ($b['roommate_name'] ?? '')) ?: null;
-            if (!$roommateName) eow_fail('specific_person roommate requires roommate_person_id or roommate_name');
+            $v['roommate_name'] = trim((string) ($b['roommate_name'] ?? '')) ?: null;
+            if (!$v['roommate_name']) eow_fail('specific_person roommate requires roommate_person_id or roommate_name');
         }
     }
+    $v = eow_normalizeRequestFields($v);
 
-    $dietCat = $b['dietary_category'] ?? null;
-    if ($dietCat) eo_validateEnum($dietCat, EOW_DIETARY_CATEGORIES, 'dietary_category');
+    // person_id is derived from the trusted profile linkage, never the body.
+    $personId = eow_trustedPersonId($pdo, $userId);
 
     $now = date('Y-m-d H:i:s');
     $pdo->prepare("
@@ -285,10 +335,11 @@ function eow_submitWorkRequest(PDO $pdo, int $userId): void {
              dietary_category, dietary_detail, notes, requested_at)
         VALUES (?,?,?,?, 'requested', ?,?,?,?,?,?,?,?,?,?,?,?)
     ")->execute([
-        eo_newUuid(), $eventId, $userId, $b['person_id'] ?? null,
-        $availability, $availFrom, $availThru, $travel, $lodging,
-        $roommatePref, $roommatePersonId, $roommateName,
-        $dietCat, $b['dietary_detail'] ?? null, $b['notes'] ?? null, $now,
+        eo_newUuid(), $eventId, $userId, $personId,
+        $v['availability'], $v['available_from'], $v['available_through'],
+        $v['travel_intent'], $v['lodging_intent'],
+        $v['roommate_pref'], $v['roommate_person_id'], $v['roommate_name'],
+        $v['dietary_category'], $v['dietary_detail'], $v['notes'], $now,
     ]);
     $requestId = (int) $pdo->lastInsertId();
 
@@ -313,31 +364,57 @@ function eow_updateWorkRequest(PDO $pdo, int $userId): void {
     if ((int) $r['user_id'] !== $userId) eow_fail('Forbidden', 403);
     if ($r['status'] !== 'requested') eow_fail('Only pending requests can be edited', 409);
 
-    $fields = [];
-    $params = [];
-    foreach (['availability','travel_intent','lodging_intent','roommate_pref','dietary_category'] as $f) {
-        if (array_key_exists($f, $b)) {
-            $map = ['availability' => EOW_AVAILABILITY, 'travel_intent' => EOW_TRAVEL_INTENT,
-                    'lodging_intent' => EOW_LODGING_INTENT, 'roommate_pref' => EOW_ROOMMATE_PREF,
-                    'dietary_category' => EOW_DIETARY_CATEGORIES];
-            if ($b[$f] !== null) eo_validateEnum($b[$f], $map[$f], $f);
-            $fields[] = "`$f` = ?"; $params[] = $b[$f];
+    // Merge body over the existing row, then normalize — the same dependent-field
+    // invariants apply on update as on submit, so stale roommate/dietary/
+    // availability values cannot survive a change to their parent field.
+    $v = [
+        'availability'       => array_key_exists('availability', $b) ? ($b['availability'] ?? 'full') : $r['availability'],
+        'available_from'     => array_key_exists('available_from', $b) ? eow_dtOrNull($b['available_from']) : $r['available_from'],
+        'available_through'  => array_key_exists('available_through', $b) ? eow_dtOrNull($b['available_through']) : $r['available_through'],
+        'travel_intent'      => array_key_exists('travel_intent', $b) ? $b['travel_intent'] : $r['travel_intent'],
+        'lodging_intent'     => array_key_exists('lodging_intent', $b) ? $b['lodging_intent'] : $r['lodging_intent'],
+        'roommate_pref'      => array_key_exists('roommate_pref', $b) ? $b['roommate_pref'] : $r['roommate_pref'],
+        'roommate_person_id' => array_key_exists('roommate_person_id', $b)
+                                  ? ($b['roommate_person_id'] !== null ? (int) $b['roommate_person_id'] : null)
+                                  : ($r['roommate_person_id'] !== null ? (int) $r['roommate_person_id'] : null),
+        'roommate_name'      => array_key_exists('roommate_name', $b) ? $b['roommate_name'] : $r['roommate_name'],
+        'dietary_category'   => array_key_exists('dietary_category', $b) ? $b['dietary_category'] : $r['dietary_category'],
+        'dietary_detail'     => array_key_exists('dietary_detail', $b) ? $b['dietary_detail'] : $r['dietary_detail'],
+        'notes'              => array_key_exists('notes', $b) ? $b['notes'] : $r['notes'],
+    ];
+    $enumMap = ['availability' => EOW_AVAILABILITY, 'travel_intent' => EOW_TRAVEL_INTENT,
+                'lodging_intent' => EOW_LODGING_INTENT, 'roommate_pref' => EOW_ROOMMATE_PREF,
+                'dietary_category' => EOW_DIETARY_CATEGORIES];
+    foreach ($enumMap as $f => $allowed) {
+        if ($v[$f] !== null && $v[$f] !== '') eo_validateEnum($v[$f], $allowed, $f);
+    }
+    $v = eow_normalizeRequestFields($v);
+    // Validate roommate identifiers against the normalized result — if lodging
+    // is no longer hotel, normalization already cleared these fields.
+    if ($v['roommate_pref'] === 'specific_person') {
+        if (empty($v['roommate_person_id']) && empty($v['roommate_name'])) {
+            eow_fail('specific_person roommate requires roommate_person_id or roommate_name');
+        }
+        if ($v['roommate_person_id'] !== null) {
+            $chk = $pdo->prepare("SELECT id FROM persons WHERE id = ?");
+            $chk->execute([$v['roommate_person_id']]);
+            if (!$chk->fetchColumn()) eow_fail('roommate_person_id not found');
         }
     }
-    foreach (['roommate_name','dietary_detail','notes'] as $f) {
-        if (array_key_exists($f, $b)) { $fields[] = "`$f` = ?"; $params[] = $b[$f]; }
-    }
-    foreach (['available_from','available_through'] as $f) {
-        if (array_key_exists($f, $b)) { $fields[] = "`$f` = ?"; $params[] = eow_dtOrNull($b[$f]); }
-    }
-    if (array_key_exists('roommate_person_id', $b)) {
-        $fields[] = 'roommate_person_id = ?';
-        $params[] = $b['roommate_person_id'] !== null ? (int) $b['roommate_person_id'] : null;
-    }
-    if ($fields) {
-        $params[] = $id;
-        $pdo->prepare("UPDATE event_staff_requests SET " . implode(', ', $fields) . " WHERE id = ?")->execute($params);
-    }
+
+    $pdo->prepare("
+        UPDATE event_staff_requests SET
+            availability=?, available_from=?, available_through=?,
+            travel_intent=?, lodging_intent=?,
+            roommate_pref=?, roommate_person_id=?, roommate_name=?,
+            dietary_category=?, dietary_detail=?, notes=?
+        WHERE id = ?
+    ")->execute([
+        $v['availability'], $v['available_from'], $v['available_through'],
+        $v['travel_intent'], $v['lodging_intent'],
+        $v['roommate_pref'], $v['roommate_person_id'], $v['roommate_name'],
+        $v['dietary_category'], $v['dietary_detail'], $v['notes'], $id,
+    ]);
     if (array_key_exists('beverages', $b) && is_array($b['beverages'])) {
         $pdo->prepare("DELETE FROM event_staff_request_beverages WHERE request_id = ?")->execute([$id]);
         $ins = $pdo->prepare("INSERT INTO event_staff_request_beverages (request_id, beverage, sort_order) VALUES (?,?,?)");
@@ -349,13 +426,19 @@ function eow_updateWorkRequest(PDO $pdo, int $userId): void {
     rsa_jsonResponse(['success' => true]);
 }
 
-/** Cancel my request (any status). History is preserved. */
+/** Cancel my own request — only from requested/waitlisted. A confirmed
+ *  assignment cannot be self-cancelled because it must deactivate the linked
+ *  roster row; that path is admin-only via decideWorkRequest. */
 function eow_cancelWorkRequest(PDO $pdo, int $userId): void {
     $b = eo_body();
     $id = (int) ($b['request_id'] ?? 0);
     $r = eow_getRequestOrFail($pdo, $id);
     if ((int) $r['user_id'] !== $userId) eow_fail('Forbidden', 403);
-    if (in_array($r['status'], ['cancelled'], true)) eow_fail('Request already cancelled', 409);
+    if (!in_array($r['status'], EOW_WORKER_CANCELLABLE, true)) {
+        eow_fail($r['status'] === 'confirmed'
+            ? 'A confirmed assignment cannot be cancelled here — contact the event administrator.'
+            : "Cannot cancel a request in status '{$r['status']}'", 409);
+    }
     $pdo->prepare("UPDATE event_staff_requests SET status='cancelled', decided_at=? WHERE id=?")
         ->execute([date('Y-m-d H:i:s'), $id]);
     eow_recordRequestEvent($pdo, $id, 'cancelled', $userId, 'Cancelled by worker');
@@ -431,41 +514,94 @@ function eow_getStaffRequest(PDO $pdo, int $userId, string $role): void {
     rsa_jsonResponse(['request' => eow_shapeRequest($r, true)]);
 }
 
-/** Confirm / waitlist / decline (or reopen) a request. Confirm creates the staff row. */
+/** Confirm / waitlist / decline / reopen a request — on the EXACT plan the
+ *  admin is viewing (plan_id required; never inferred from the parity event).
+ *
+ *  Transition model (EOW_DECISION_TRANSITIONS): a request may only move along
+ *  an allowed edge. Leaving 'confirmed' deactivates the linked event_plan_staff
+ *  row instead of deleting it — roster history and request history are both
+ *  preserved. event_plan_staff_id is RETAINED on the request: it records which
+ *  roster row this confirmation produced, and is_active carries the live truth.
+ *  The whole operation runs in one transaction so the request status and the
+ *  roster row can never diverge.
+ */
 function eow_decideWorkRequest(PDO $pdo, int $userId, string $role): void {
     eo_requireAdmin($pdo, $userId, $role);
     $b = eo_body();
     $id = (int) ($b['request_id'] ?? 0);
+    $planId = (int) ($b['plan_id'] ?? 0);
     $decision = $b['decision'] ?? '';
     eo_validateEnum($decision, EOW_REQUEST_STATUSES, 'decision');
     $note = isset($b['note']) ? trim((string) $b['note']) : null;
+    if (!$planId) eow_fail('plan_id required — decide requests on the plan being viewed');
 
     $r = eow_getRequestOrFail($pdo, $id);
+    $plan = eo_getPlanOrFail($pdo, $planId);
+    if ((int) ($plan['parity_event_id'] ?? 0) !== (int) $r['parity_event_id']) {
+        eow_fail('plan_id does not belong to the same canonical event as this request', 409);
+    }
+
+    $current = $r['status'];
+    if (!in_array($decision, EOW_DECISION_TRANSITIONS[$current] ?? [], true)) {
+        eow_fail("Cannot transition request from '$current' to '$decision'", 409);
+    }
+
     $now = date('Y-m-d H:i:s');
     $staffId = $r['event_plan_staff_id'] ? (int) $r['event_plan_staff_id'] : null;
 
-    if ($decision === 'confirmed' && !$staffId) {
-        $plan = eow_planForParityEvent($pdo, (int) $r['parity_event_id']);
-        if (!$plan) eow_fail('No event plan is linked to this parity event — create the plan first.', 409);
-        // Reuse an existing staff row for this user on the plan if present
-        $chk = $pdo->prepare("SELECT id FROM event_plan_staff WHERE event_plan_id = ? AND user_id = ? AND deleted_at IS NULL");
-        $chk->execute([(int) $plan['id'], (int) $r['user_id']]);
-        $staffId = (int) ($chk->fetchColumn() ?: 0);
-        if (!$staffId) {
-            $u = $pdo->prepare("SELECT name FROM users WHERE id = ?");
-            $u->execute([(int) $r['user_id']]);
-            $name = $u->fetchColumn() ?: ('User #' . $r['user_id']);
-            $pdo->prepare("
-                INSERT INTO event_plan_staff (event_plan_id, user_id, person_id, display_name, assignment, notes, is_active)
-                VALUES (?,?,?,?, 'Staff', ?, 1)
-            ")->execute([(int) $plan['id'], (int) $r['user_id'], $r['person_id'], $name, 'Confirmed from work request #' . $id]);
-            $staffId = (int) $pdo->lastInsertId();
+    $pdo->beginTransaction();
+    try {
+        if ($decision === 'confirmed') {
+            if ($staffId) {
+                $s = eow_getStaffOrFail($pdo, $staffId);
+                if ((int) $s['event_plan_id'] === (int) $plan['id']) {
+                    // Same plan — re-activate the row this request produced.
+                    $pdo->prepare("UPDATE event_plan_staff SET is_active = 1 WHERE id = ? AND deleted_at IS NULL")
+                        ->execute([$staffId]);
+                } elseif ((int) $s['is_active'] === 1) {
+                    // Actively rostered on a DIFFERENT plan — contradiction; the
+                    // admin must move it off confirmed on that plan first.
+                    $pdo->rollBack();
+                    eow_fail('Request is linked to active staff on a different plan — reconcile that plan first', 409);
+                } else {
+                    // Linked row is on another plan but already deactivated —
+                    // intentional reassignment: fall through to create/reuse a
+                    // row on this plan and repoint event_plan_staff_id.
+                    $staffId = null;
+                }
+            }
+            if (!$staffId) {
+                // Reuse an existing staff row for this user on THIS plan, else create it.
+                $chk = $pdo->prepare("SELECT id FROM event_plan_staff WHERE event_plan_id = ? AND user_id = ? AND deleted_at IS NULL");
+                $chk->execute([(int) $plan['id'], (int) $r['user_id']]);
+                $staffId = (int) ($chk->fetchColumn() ?: 0);
+                if (!$staffId) {
+                    $u = $pdo->prepare("SELECT name FROM users WHERE id = ?");
+                    $u->execute([(int) $r['user_id']]);
+                    $name = $u->fetchColumn() ?: ('User #' . $r['user_id']);
+                    $pdo->prepare("
+                        INSERT INTO event_plan_staff (event_plan_id, user_id, person_id, display_name, assignment, notes, is_active)
+                        VALUES (?,?,?,?, 'Staff', ?, 1)
+                    ")->execute([(int) $plan['id'], (int) $r['user_id'], $r['person_id'], $name, 'Confirmed from work request #' . $id]);
+                    $staffId = (int) $pdo->lastInsertId();
+                } else {
+                    $pdo->prepare("UPDATE event_plan_staff SET is_active = 1 WHERE id = ?")->execute([$staffId]);
+                }
+            }
+        } elseif ($current === 'confirmed' && $staffId) {
+            // Leaving 'confirmed' — deactivate the roster row (history kept).
+            $pdo->prepare("UPDATE event_plan_staff SET is_active = 0 WHERE id = ? AND deleted_at IS NULL")
+                ->execute([$staffId]);
         }
-    }
 
-    $pdo->prepare("UPDATE event_staff_requests SET status=?, decided_at=?, decided_by=?, decision_note=?, event_plan_staff_id=? WHERE id=?")
-        ->execute([$decision, $now, $userId, $note, $staffId, $id]);
-    eow_recordRequestEvent($pdo, $id, $decision, $userId, $note);
+        $pdo->prepare("UPDATE event_staff_requests SET status=?, decided_at=?, decided_by=?, decision_note=?, event_plan_staff_id=? WHERE id=?")
+            ->execute([$decision, $now, $userId, $note, $staffId, $id]);
+        eow_recordRequestEvent($pdo, $id, $decision, $userId, $note);
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) $pdo->rollBack();
+        eow_fail('Decision failed: ' . $e->getMessage(), 500);
+    }
 
     rsa_jsonResponse(['success' => true, 'staff_id' => $staffId]);
 }
@@ -579,7 +715,9 @@ function eow_updateTravelLeg(PDO $pdo, int $userId, string $role): void {
     if (!$id) eow_fail('leg_id required');
     $chk = $pdo->prepare("SELECT staff_id FROM event_staff_travel_legs WHERE id = ? AND deleted_at IS NULL");
     $chk->execute([$id]);
-    if (!$chk->fetchColumn()) eow_fail('Travel leg not found', 404);
+    $legStaffId = $chk->fetchColumn();
+    if (!$legStaffId) eow_fail('Travel leg not found', 404);
+    $legStaff = eow_getStaffOrFail($pdo, (int) $legStaffId);
 
     $fields = []; $params = [];
     foreach (['airline','flight_number','origin_code','dest_code','vehicle_desc','confirmation','notes'] as $f) {
@@ -595,8 +733,15 @@ function eow_updateTravelLeg(PDO $pdo, int $userId, string $role): void {
         }
     }
     if (array_key_exists('carpool_with_staff_id', $b)) {
+        $carpool = $b['carpool_with_staff_id'] ? (int) $b['carpool_with_staff_id'] : null;
+        if ($carpool) {
+            $c = eow_getStaffOrFail($pdo, $carpool);
+            if ((int) $c['event_plan_id'] !== (int) $legStaff['event_plan_id']) {
+                eow_fail('carpool driver must be staff on the same plan');
+            }
+        }
         $fields[] = 'carpool_with_staff_id = ?';
-        $params[] = $b['carpool_with_staff_id'] ? (int) $b['carpool_with_staff_id'] : null;
+        $params[] = $carpool;
     }
     if (!$fields) eow_fail('No fields to update');
     $params[] = $id;
@@ -653,6 +798,33 @@ function eow_upsertStaffLodging(PDO $pdo, int $userId, string $role): void {
         VALUES (?,?,?,?,?,?,?,?,?,?,?)
     ")->execute([$staffId, ...$vals]);
     rsa_jsonResponse(['success' => true, 'lodging_id' => (int) $pdo->lastInsertId()], 201);
+}
+
+/** Admin: link/unlink a worker's persons.id. This is the ONLY path that sets
+ *  person_id on a worker profile — workers cannot self-assign an identity. */
+function eow_adminLinkWorkerPerson(PDO $pdo, int $userId, string $role): void {
+    eo_requireAdmin($pdo, $userId, $role);
+    $b = eo_body();
+    $targetUserId = (int) ($b['user_id'] ?? 0);
+    if (!$targetUserId) eow_fail('user_id required');
+    $personId = !empty($b['person_id']) ? (int) $b['person_id'] : null;
+    if ($personId !== null) {
+        $chk = $pdo->prepare("SELECT id FROM persons WHERE id = ?");
+        $chk->execute([$personId]);
+        if (!$chk->fetchColumn()) eow_fail('person_id not found', 404);
+    }
+    $u = $pdo->prepare("SELECT id FROM users WHERE id = ?");
+    $u->execute([$targetUserId]);
+    if (!$u->fetchColumn()) eow_fail('User not found', 404);
+
+    if (eow_profile($pdo, $targetUserId)) {
+        $pdo->prepare("UPDATE event_worker_profiles SET person_id = ? WHERE user_id = ?")
+            ->execute([$personId, $targetUserId]);
+    } else {
+        $pdo->prepare("INSERT INTO event_worker_profiles (uuid, user_id, person_id) VALUES (?,?,?)")
+            ->execute([eo_newUuid(), $targetUserId, $personId]);
+    }
+    rsa_jsonResponse(['success' => true]);
 }
 
 /** Aggregate staffing summary for a plan's canonical event — admin only. */

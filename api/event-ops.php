@@ -232,6 +232,40 @@ function eo_updatePlan(PDO $pdo, int $userId, string $role): void {
     if (!$planId) { http_response_code(400); echo json_encode(['error' => 'plan_id required']); exit; }
     eo_getPlanOrFail($pdo, $planId);
 
+    // Canonical re-link: when parity_event_id is supplied, identity fields are
+    // derived from the canonical event exactly as eo_createPlan does — the plan
+    // can never link to one parity event while carrying another event's
+    // code/year/date/track. Explicit body values still override (same rule as
+    // createPlan), so admin correction remains possible.
+    if (array_key_exists('parity_event_id', $b)) {
+        $peId = ($b['parity_event_id'] !== null && $b['parity_event_id'] !== '')
+            ? (int) $b['parity_event_id'] : null;
+        if ($peId) {
+            $stmt = $pdo->prepare("
+                SELECT pe.*, pt.track_name AS track_name_canonical
+                FROM parity_events pe JOIN parity_tracks pt ON pt.id = pe.track_id
+                WHERE pe.id = ?
+            ");
+            $stmt->execute([$peId]);
+            $pe = $stmt->fetch(PDO::FETCH_ASSOC);
+            if (!$pe) {
+                http_response_code(404);
+                echo json_encode(['error' => 'parity_event_id not found']);
+                exit;
+            }
+            if (!array_key_exists('year', $b))              $b['year'] = (int) $pe['season_year'];
+            if (!array_key_exists('event_code', $b))        $b['event_code'] = $pe['event_code'];
+            if (!array_key_exists('event_date', $b))        $b['event_date'] = $pe['start_date_local'];
+            if (!array_key_exists('track_name', $b))        $b['track_name'] = $pe['track_name_canonical'];
+            if (!array_key_exists('title', $b))             $b['title'] = $pe['event_name'];
+            if (!array_key_exists('event_instance_id', $b)) $b['event_instance_id'] = $pe['event_instance_id'];
+        } else {
+            // Explicit detach — clear the parity bridge link too unless the
+            // caller supplies a different event_instance_id in the same call.
+            if (!array_key_exists('event_instance_id', $b)) $b['event_instance_id'] = null;
+        }
+    }
+
     $fields = [];
     $params = [];
     $allowed = ['year','event_code','event_date','track_name','title','class_scope','plan_type','status','lifecycle_stage','summary','approved_by','approved_at','event_instance_id','parity_event_id'];
@@ -1172,6 +1206,7 @@ $adminActions = [
     'updateTravelLeg'           => 'eow_updateTravelLeg',
     'deleteTravelLeg'           => 'eow_deleteTravelLeg',
     'upsertStaffLodging'        => 'eow_upsertStaffLodging',
+    'adminLinkWorkerPerson'     => 'eow_adminLinkWorkerPerson',
     'getStaffingSummary'        => 'eow_getStaffingSummary',
     // v38 live checklist writes
     'startLiveChecklist'            => 'eo_startLiveChecklist',

@@ -217,6 +217,10 @@ function Navigation() {
       {canAccessEventOps && (
         <Link to="/event-ops" style={navLinkStyle(isActive('/event-ops'))} onClick={close}>Event Ops</Link>
       )}
+      {/* Worker-facing staffing requests — any authenticated user, no eventops cap */}
+      {isLoggedIn && (
+        <Link to="/event-ops/requests" style={navLinkStyle(isActive('/event-ops/requests'))} onClick={close}>Work an Event</Link>
+      )}
     </>
   );
 

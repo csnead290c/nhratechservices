@@ -253,7 +253,7 @@ function RequestsSection({ planId, parityEventId, onChanged, showToast }: {
 
   async function decide(r: EventWorkRequest, decision: RequestStatus) {
     try {
-      await decideWorkRequest(r.id, decision);
+      await decideWorkRequest(r.id, planId, decision);
       showToast(true, `${r.user_name ?? 'Worker'} ${decision}.`);
       reload();
       onChanged();
